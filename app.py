@@ -2,20 +2,17 @@ import streamlit as st
 import requests
 import pandas as pd
 
-# Ρύθμιση σελίδας
-st.set_page_config(page_title="Σύγκριση Αποδόσεων: Bet365 vs Stoiximan", layout="wide")
+st.set_page_config(page_title="Σύγκριση Αποδόσεων Ποδοσφαίρου", layout="wide")
 
 st.title("⚽ Σύγκριση Αποδόσεων Ποδοσφαίρου")
-st.subheader("Bet365 vs Stoiximan (Cyprus / EU)")
+st.subheader("Παρακολούθηση Αποδόσεων σε Πραγματικό Χρόνο")
 
-# 1. Αυτόματη ανάκτηση του API Key από τα Streamlit Secrets
+# Διαβάζουμε το API Key από τα Secrets
 if "ODDS_API_KEY" in st.secrets:
     API_KEY = st.secrets["ODDS_API_KEY"]
 else:
-    st.error("⚠️ Δεν βρέθηκε το 'ODDS_API_KEY' στα Secrets. Προσθέστε το στο secrets.toml ή στις ρυθμίσεις του Streamlit Cloud.")
-    API_KEY = None
+    API_KEY = "3d3e3d0ffab7cf371cb31edcad75b90a" # Fallback key
 
-# Sidebar για επιλογή πρωταθλήματος
 st.sidebar.header("Ρυθμίσεις")
 SPORT = st.sidebar.selectbox(
     "Επιλογή Πρωταθλήματος",
@@ -30,13 +27,11 @@ SPORT = st.sidebar.selectbox(
 )[0]
 
 def fetch_odds(api_key, sport_key):
-    """Ανάκτηση αποδόσεων από το API για Ευρώπη / Κύπρο"""
     url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds/'
     params = {
         'apiKey': api_key,
-        'regions': 'eu', # Ευρωπαϊκή περιοχή (καλύπτει Κύπρο)
-        'markets': 'h2h', # Αγορά 1X2
-        'bookmakers': 'bet365,stoiximan_gr,stoiximan,betano_eu' # Όλα τα πιθανά κλειδιά
+        'regions': 'eu,uk', # Περιλαμβάνει Bet365 και Ευρωπαϊκές εταιρίες
+        'markets': 'h2h'
     }
     
     response = requests.get(url, params=params)
@@ -47,51 +42,54 @@ def fetch_odds(api_key, sport_key):
         return None
 
 if st.button("Ανανέωση Αποδόσεων 🔄"):
-    if not API_KEY:
-        st.warning("Παρακαλώ βεβαιωθείτε ότι έχετε ορίσει το API Key στα Secrets.")
-    else:
-        with st.spinner("Ανάκτηση δεδομένων..."):
-            data = fetch_odds(API_KEY, SPORT)
-            
-            if data:
-                rows = []
-                for match in data:
-                    home = match['home_team']
-                    away = match['away_team']
-                    commence_time = pd.to_datetime(match['commence_time']).strftime('%Y-%m-%d %H:%M')
-                    
-                    # Αρχικοποίηση τιμών
-                    bet365_1, bet365_x, bet365_2 = "-", "-", "-"
-                    stoiximan_1, stoiximan_x, stoiximan_2 = "-", "-", "-"
-                    
-                    for bookmaker in match.get('bookmakers', []):
-                        bm_key = bookmaker['key']
-                        for market in bookmaker.get('markets', []):
-                            if market['key'] == 'h2h':
-                                outcomes = {out['name']: out['price'] for out in market['outcomes']}
-                                
-                                h_odds = outcomes.get(home, "-")
-                                a_odds = outcomes.get(away, "-")
-                                d_odds = outcomes.get("Draw", "-")
-                                
-                                if bm_key == 'bet365':
-                                    bet365_1, bet365_x, bet365_2 = h_odds, d_odds, a_odds
-                                elif bm_key in ['stoiximan', 'stoiximan_gr', 'betano_eu']:
-                                    stoiximan_1, stoiximan_x, stoiximan_2 = h_odds, d_odds, a_odds
-                    
-                    rows.append({
-                        "Έναρξη": commence_time,
-                        "Αγώνας": f"{home} vs {away}",
-                        "Bet365 (1)": bet365_1,
-                        "Stoiximan (1)": stoiximan_1,
-                        "Bet365 (X)": bet365_x,
-                        "Stoiximan (X)": stoiximan_x,
-                        "Bet365 (2)": bet365_2,
-                        "Stoiximan (2)": stoiximan_2,
-                    })
+    with st.spinner("Ανάκτηση δεδομένων..."):
+        data = fetch_odds(API_KEY, SPORT)
+        
+        if data:
+            rows = []
+            for match in data:
+                home = match['home_team']
+                away = match['away_team']
+                commence_time = pd.to_datetime(match['commence_time']).strftime('%Y-%m-%d %H:%M')
                 
-                if rows:
-                    df = pd.DataFrame(rows)
-                    st.dataframe(df, use_container_width=True)
-                else:
-                    st.info("Δεν βρέθηκαν διαθέσιμες αποδόσεις για τις συγκεκριμένες εταιρίες.")
+                # Αρχικοποίηση για διαθέσιμες εταιρίες
+                b365_1, b365_x, b365_2 = "-", "-", "-"
+                pinnacle_1, pinnacle_x, pinnacle_2 = "-", "-", "-"
+                unibet_1, unibet_x, unibet_2 = "-", "-", "-"
+                
+                for bookmaker in match.get('bookmakers', []):
+                    bm_key = bookmaker['key']
+                    for market in bookmaker.get('markets', []):
+                        if market['key'] == 'h2h':
+                            outcomes = {out['name']: out['price'] for out in market['outcomes']}
+                            
+                            h = outcomes.get(home, "-")
+                            a = outcomes.get(away, "-")
+                            d = outcomes.get("Draw", "-")
+                            
+                            if bm_key == 'bet365':
+                                b365_1, b365_x, b365_2 = h, d, a
+                            elif bm_key == 'pinnacle':
+                                pinnacle_1, pinnacle_x, pinnacle_2 = h, d, a
+                            elif 'unibet' in bm_key:
+                                unibet_1, unibet_x, unibet_2 = h, d, a
+                
+                rows.append({
+                    "Έναρξη": commence_time,
+                    "Αγώνας": f"{home} vs {away}",
+                    "Bet365 (1)": b365_1,
+                    "Bet365 (X)": b365_x,
+                    "Bet365 (2)": b365_2,
+                    "Pinnacle (1)": pinnacle_1,
+                    "Pinnacle (X)": pinnacle_x,
+                    "Pinnacle (2)": pinnacle_2,
+                    "Unibet (1)": unibet_1,
+                    "Unibet (X)": unibet_x,
+                    "Unibet (2)": unibet_2,
+                })
+            
+            if rows:
+                df = pd.DataFrame(rows)
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("Δεν βρέθηκαν διαθέσιμες αποδόσεις.")
