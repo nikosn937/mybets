@@ -6,12 +6,17 @@ import pandas as pd
 st.set_page_config(page_title="Σύγκριση Αποδόσεων: Bet365 vs Stoiximan", layout="wide")
 
 st.title("⚽ Σύγκριση Αποδόσεων Ποδοσφαίρου")
-st.subheader("Bet365 vs Stoiximan")
+st.subheader("Bet365 vs Stoiximan (Cyprus / EU)")
 
-# Sidebar για παραμέτρους
+# 1. Αυτόματη ανάκτηση του API Key από τα Streamlit Secrets
+if "ODDS_API_KEY" in st.secrets:
+    API_KEY = st.secrets["ODDS_API_KEY"]
+else:
+    st.error("⚠️ Δεν βρέθηκε το 'ODDS_API_KEY' στα Secrets. Προσθέστε το στο secrets.toml ή στις ρυθμίσεις του Streamlit Cloud.")
+    API_KEY = None
+
+# Sidebar για επιλογή πρωταθλήματος
 st.sidebar.header("Ρυθμίσεις")
-API_KEY = st.sidebar.text_input("Εισάγετε το API Key σου (The-Odds-API):", type="password")
-
 SPORT = st.sidebar.selectbox(
     "Επιλογή Πρωταθλήματος",
     [
@@ -25,25 +30,25 @@ SPORT = st.sidebar.selectbox(
 )[0]
 
 def fetch_odds(api_key, sport_key):
-    """Ανάκτηση αποδόσεων από το API"""
+    """Ανάκτηση αποδόσεων από το API για Ευρώπη / Κύπρο"""
     url = f'https://api.the-odds-api.com/v4/sports/{sport_key}/odds/'
     params = {
         'apiKey': api_key,
-        'regions': 'eu',
-        'markets': 'h2h', # 1X2 (Home / Draw / Away)
-        'bookmakers': 'bet365,stoiximan' # Φιλτράρισμα μόνο για τις 2 εταιρίες
+        'regions': 'eu', # Ευρωπαϊκή περιοχή (καλύπτει Κύπρο)
+        'markets': 'h2h', # Αγορά 1X2
+        'bookmakers': 'bet365,stoiximan_gr,stoiximan,betano_eu' # Όλα τα πιθανά κλειδιά
     }
     
     response = requests.get(url, params=params)
     if response.status_code == 200:
         return response.json()
     else:
-        st.error(f"Σφάλμα API: {response.status_code} - {response.text}")
+        st.error(f"Σφάλμα API ({response.status_code}): {response.text}")
         return None
 
 if st.button("Ανανέωση Αποδόσεων 🔄"):
     if not API_KEY:
-        st.warning("Παρακαλώ εισάγετε ένα API Key στο πλαϊνό μενού.")
+        st.warning("Παρακαλώ βεβαιωθείτε ότι έχετε ορίσει το API Key στα Secrets.")
     else:
         with st.spinner("Ανάκτηση δεδομένων..."):
             data = fetch_odds(API_KEY, SPORT)
@@ -71,7 +76,7 @@ if st.button("Ανανέωση Αποδόσεων 🔄"):
                                 
                                 if bm_key == 'bet365':
                                     bet365_1, bet365_x, bet365_2 = h_odds, d_odds, a_odds
-                                elif bm_key == 'stoiximan':
+                                elif bm_key in ['stoiximan', 'stoiximan_gr', 'betano_eu']:
                                     stoiximan_1, stoiximan_x, stoiximan_2 = h_odds, d_odds, a_odds
                     
                     rows.append({
@@ -89,4 +94,4 @@ if st.button("Ανανέωση Αποδόσεων 🔄"):
                     df = pd.DataFrame(rows)
                     st.dataframe(df, use_container_width=True)
                 else:
-                    st.info("Δεν βρέθηκαν διαθέσιμοι αγώνες ή αποδόσεις για τις συγκεκριμένες εταιρίες.")
+                    st.info("Δεν βρέθηκαν διαθέσιμες αποδόσεις για τις συγκεκριμένες εταιρίες.")
