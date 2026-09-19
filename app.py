@@ -21,7 +21,8 @@ st.sidebar.header("⚙️ Παράμετροι Ανάλυσης")
 selected_league_name = st.sidebar.selectbox("Επιλέξτε Πρωτάθλημα", list(LEAGUES.keys()))
 league_url = LEAGUES[selected_league_name]
 
-CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό "Σιγουριάς" (%)", min_value=50, max_value=85, value=65, step=5)
+# Διορθωμένη γραμμή 24
+CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό Σιγουριάς (%)", min_value=50, max_value=85, value=65, step=5)
 
 @st.cache_data(ttl=3600)
 def load_data(url):
@@ -129,8 +130,8 @@ if df is not None and len(df) > 10:
             tips.append((f"1 (Νίκη {home_select})", pred['Prob_1'] * 100))
         if pred['Prob_2'] * 100 >= CONFIDENCE_THRESHOLD:
             tips.append((f"2 (Νίκη {away_select})", pred['Prob_2'] * 100))
-        if pred['Prob_1'] + pred['Prob_X'] >= CONFIDENCE_THRESHOLD / 100:
-            tips.append((f"1X (Διπλή Ευκαιρία)", (pred['Prob_1'] + pred['Prob_X']) * 100))
+        if (pred['Prob_1'] + pred['Prob_X']) * 100 >= CONFIDENCE_THRESHOLD:
+            tips.append(("1X (Διπλή Ευκαιρία)", (pred['Prob_1'] + pred['Prob_X']) * 100))
         if pred['Prob_Over_1.5'] * 100 >= CONFIDENCE_THRESHOLD:
             tips.append(("Over 1.5 Goals", pred['Prob_Over_1.5'] * 100))
         if pred['Prob_Over_2.5'] * 100 >= CONFIDENCE_THRESHOLD:
