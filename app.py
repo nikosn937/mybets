@@ -249,12 +249,12 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_Over_2.5': prob_over_2_5
     }
 
-# --- AI ΑΝΑΛΥΣΗ ΜΕ ZΩΝΤΑΝΗ ΑΝΑΖΗΤΗΣΗ ΣΤΟ GOOGLE ---
+# --- AI ΑΝΑΛΥΣΗ ΜΕ ZΩΝΤΑΝΗ ΑΝΑΖΗΤΗΣΗ ΣΤΟ GOOGLE (GEMINI-3.6-FLASH) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_live_ai_search_analysis(home_team, away_team, date_str, stats_summary):
     """
     Εκτελεί ζωντανή αναζήτηση στο Internet (Google Search Grounding)
-    και συνδυάζει τα τελευταία νέα με τα ποσοτικά δεδομένα.
+    χρησιμοποιώντας το μοντέλο gemini-3.6-flash.
     """
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -275,35 +275,32 @@ def get_live_ai_search_analysis(home_team, away_team, date_str, stats_summary):
     2. Εντόπισε αν υπάρχουν κομβικές απουσίες (τραυματισμοί/κάρτες), αλλαγές προπονητών, ειδικά κίνητρα ή επιβάρυνση από ευρωπαϊκά ματς.
     3. Συνδύασε τα ευρήματα της αναζήτησης με τα στατιστικά δεδομένα του μοντέλου.
     
-    ΣΥΝΤΑΞΕ ΑΝΑΦΟΡΑ ΣΤΑ ΕΛΛΗΝΙΚΑ ΜΕ ΤΑ ΕΞΗΣ BUTE-POINTS:
+    ΣΥΝΤΑΞΕ ΑΝΑΦΟΡΑ ΣΤΑ ΕΛΛΗΝΙΚΑ ΜΕ ΤΑ ΕΞΗΣ BULLET POINTS:
     - 📰 **Τελευταία Νέα & Απουσίες (Live Web Search)**: Αναφορά σε συγκεκριμένους παίκτες ή ειδήσεις που βρέθηκαν.
     - 📊 **Στατιστική vs Πραγματική Εικόνα**: Πώς επηρεάζουν τα νέα τις πιθανότητες του μοντέλου.
     - ⚽ **Εκτίμηση Ρυθμού & Goal Profile**: (Over/Under, BTTS).
     - 🎯 **Τελικό AI Verdict**: (Επιβεβαίωση σημείου, Reroute σε διπλή ευκαιρία 1X/X2, ή Αποχή λόγω ρίσκου).
     """
 
-    models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash']
-
-    for model_name in models_to_try:
-        for attempt in range(2):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        tools=[{"google_search": {}}] # Ενεργοποίηση Dynamic Google Search
-                    )
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())]  # Σωστή σύνταξη Search Grounding
                 )
-                return response.text
-            except Exception as e:
-                err_msg = str(e)
-                if "503" in err_msg or "UNAVAILABLE" in err_msg or "demand" in err_msg:
-                    time.sleep(2)
-                    continue
-                else:
-                    return f"❌ Σφάλμα κατά τη λειτουργία AI ({model_name}): {e}"
+            )
+            return response.text
+        except Exception as e:
+            err_msg = str(e)
+            if "503" in err_msg or "UNAVAILABLE" in err_msg or "demand" in err_msg:
+                time.sleep(2)
+                continue
+            else:
+                return f"❌ Σφάλμα κατά τη λειτουργία AI (gemini-3.6-flash): {e}"
 
-    return "⚠️ Η υπηρεσία AI είναι προσωρινά μη διαθέσιμη. Παρακαλώ δοκιμάστε ξανά σε λίγα δευτερόλεπτα."
+    return "⚠️ Η υπηρεσία AI είναι προσωρινά υπερφορτωμένη. Παρακαλώ δοκιμάστε ξανά σε λίγα δευτερόλεπτα."
 
 # --- ΚΥΡΙΩΣ ΡΟΗ ΕΦΑΡΜΟΓΗΣ ---
 
@@ -424,8 +421,8 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
 
         # --- ΕΝΟΤΗΤΑ LIVE AI SEARCH ANALYST ---
         st.divider()
-        st.subheader("🌐 Live Web Search AI Analyst")
-        st.caption("Επιλέξτε έναν αγώνα. Το Gemini θα πραγματοποιήσει ζωντανή αναζήτηση στο Google για τρέχοντα νέα/απουσίες και θα τα συνδυάσει με το μοντέλο Dixon-Coles.")
+        st.subheader("🌐 Live Web Search AI Analyst (Gemini 3.6 Flash)")
+        st.caption("Επιλέξτε έναν αγώνα. Το Gemini 3.6 θα πραγματοποιήσει ζωντανή αναζήτηση στο Google για τρέχοντα νέα/απουσίες και θα τα συνδυάσει με το μοντέλο Dixon-Coles.")
         
         selected_match = st.selectbox(
             "Επιλέξτε αγώνα για AI Ανάλυση & Live Αναζήτηση:",
@@ -444,7 +441,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             - Value Bet: {match_row['Value Bet']}
             """
             
-            with st.spinner("🔎 Πραγματοποιείται ζωντανή αναζήτηση στο Google & ανάλυση από το Gemini..."):
+            with st.spinner("🔎 Πραγματοποιείται ζωντανή αναζήτηση στο Google & ανάλυση από το Gemini 3.6..."):
                 ai_report = get_live_ai_search_analysis(h_team, a_team, m_date, summary)
                 
             st.markdown("### 🤖 Live Web Search & AI Tactical Verdict")
