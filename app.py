@@ -9,7 +9,7 @@ from google.genai import types
 
 st.set_page_config(page_title="Pro Football Predictor + AI Live Scanner", layout="wide")
 
-st.title("⚽ Pro Football Predictor (Dixon-Coles + Live AI Search Analyst)")
+st.title("⚽ Pro Football Predictor (Dixon-Coles + Dynamic AI Model Scanner)")
 st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση & Live AI News/Weather Scanner")
 
 SEASON_CODE = "2627"
@@ -63,7 +63,7 @@ def clean_team_name(name):
 
 @st.cache_data(ttl=1800)
 def load_history_data(url):
-    """Φορτώνει τα δεδομένα της τρέχουσες σεζόν για τον υπολογισμό φόρμας/xG"""
+    """Φορτώνει τα δεδομένα της τρέχουσας σεζόν για τον υπολογισμό φόρμας/xG"""
     try:
         df = pd.read_csv(url)
         cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
@@ -108,7 +108,7 @@ def load_fixtures_data(code):
         return None
 
 def calculate_h2h_adjustment(df_h2h_all, home_team, away_team, max_matches=6):
-    """Υπολογίζει συντελεστή H2H με βάση πολυετή δεδομένα και καθαρισμό ονομάτων"""
+    """Υπολογίζει συντελεστή H2H με βάση πολυετή δεδομένα"""
     if df_h2h_all is None or df_h2h_all.empty:
         return 1.0, 1.0, "—"
         
@@ -191,7 +191,7 @@ def calculate_dixon_coles_stats(df, use_weights=True):
     return stats, avg_home_goals, avg_away_goals
 
 def dixon_coles_adjustment(x, y, lambda_h, lambda_a, rho):
-    """Διόρθωση Dixon-Coles για χαμηλά σκορ (0-0, 1-0, 0-1, 1-1)"""
+    """Διόρθωση Dixon-Coles για χαμηλά σκορ"""
     if x == 0 and y == 0:
         return 1.0 - (lambda_h * lambda_a * rho)
     elif x == 0 and y == 1:
@@ -244,16 +244,50 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_Over_2.5': prob_over_2_5
     }
 
+def find_best_available_model(client):
+    """
+    Ψάχνει αυτόματα στη σουίτα Gemini ποια μοντέλα είναι διαθέσιμα 
+    και επιστρέφει το καταλληλότερο μοντέλο Flash.
+    """
+    try:
+        models = client.models.list()
+        supported_models = []
+        
+        for m in models:
+            # Έλεγχος αν υποστηρίζει παραγωγή περιεχομένου
+            methods = getattr(m, 'supported_generation_methods', []) or []
+            if 'generateContent' in methods or not methods:
+                supported_models.append(m.name)
+        
+        # Προτίμηση στα νεότερα flash μοντέλα με σειρά προτεραιότητας
+        for m_name in supported_models:
+            clean_name = m_name.replace("models/", "")
+            if "flash" in clean_name.lower():
+                return clean_name
+                
+        # Αν δεν βρεθεί flash, επιστροφή του πρώτου διαθέσιμου μοντέλου
+        if supported_models:
+            return supported_models[0].replace("models/", "")
+            
+    except Exception:
+        pass
+        
+    # Default fallback
+    return "gemini-2.5-flash"
+
 def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     """
-    Κάνει live αναζήτηση στο διαδίκτυο μέσω Gemini API + Google Search Grounding 
-    για ειδήσεις/καιρό της τελευταίας στιγμής.
+    Εντοπίζει αυτόματα το ενεργό μοντέλο Gemini και εκτελεί live αναζήτηση 
+    στο διαδίκτυο με Google Search Grounding.
     """
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
         return "⚠️ Δεν έχει οριστεί το GEMINI_API_KEY στα secrets του Streamlit."
 
     client = genai.Client(api_key=api_key)
+
+    # Αυτόματος εντοπισμός του σωστού μοντέλου
+    active_model = find_best_available_model(client)
 
     prompt = f"""
     Είσαι ένας κορυφαίος αθλητικός αναλυτής και ποσοτικός αναλυτής στοιχημάτων (Quantitative Betting Analyst).
@@ -275,16 +309,17 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     """
 
     try:
+        st.toast(f"🤖 Χρήση μοντέλου: `{active_model}`")
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model=active_model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())]
             )
         )
-        return response.text
+        return response.text, active_model
     except Exception as e:
-        return f"❌ Σφάλμα κατά τη live ανάλυση AI: {e}"
+        return f"❌ Σφάλμα κατά τη live ανάλυση AI ({active_model}): {e}", active_model
 
 # --- ΚΥΡΙΩΣ ΡΟΗ ΕΦΑΡΜΟΓΗΣ ---
 
@@ -406,7 +441,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
         # --- ΕΝΟΤΗΤΑ LIVE AI ANALYST ---
         st.divider()
         st.subheader("🔍 Live AI Tactical & Last-Minute News Scanner")
-        st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το Gemini AI live αναζήτηση στο διαδίκτυο για τραυματισμούς, καιρό και ειδήσεις της τελευταίας στιγμής.")
+        st.caption("Επιλέξτε έναν αγώνα για αυτόματο εντοπισμό διαθέσιμου μοντέλου Gemini και live αναζήτηση στο διαδίκτυο.")
         
         selected_match = st.selectbox(
             "Επιλέξτε αγώνα για Live AI Ανάλυση:",
@@ -425,10 +460,10 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             - Value Bet: {match_row['Value Bet']}
             """
             
-            with st.spinner("🔎 Το AI πραγματοποιεί live αναζήτηση στο διαδίκτυο για ειδήσεις και καιρικές συνθήκες..."):
-                ai_report = get_live_ai_analysis(h_team, a_team, m_date, summary)
+            with st.spinner("🔎 Αναζήτηση ενεργού μοντέλου Gemini & εκτέλεση live αναζήτησης..."):
+                ai_report, used_model = get_live_ai_analysis(h_team, a_team, m_date, summary)
                 
-            st.markdown("### 🤖 Live AI Report & Verdict")
+            st.markdown(f"### 🤖 Live AI Report & Verdict (Μοντέλο: `{used_model}`)")
             st.info(ai_report)
 
     else:
