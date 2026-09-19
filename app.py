@@ -2,18 +2,21 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="Σύγκριση Αποδόσεων Ποδοσφαίρου", layout="wide")
+st.set_page_config(page_title="Arbitrage / Surebet Finder", layout="wide")
 
-st.title("⚽ Σύγκριση Αποδόσεων Ποδοσφαίρου (EU Region)")
-st.subheader("Παρακολούθηση: Pinnacle vs Betsson vs William Hill")
+st.title("⚡ Αρχείο Εντοπισμού Surebets (Arbitrage)")
+st.subheader("Σύγκριση Pinnacle, Betsson & William Hill για Εγγυημένο Κέρδος")
 
-# Διαβάζουμε το API Key από τα Secrets
+# API Key
 if "ODDS_API_KEY" in st.secrets:
     API_KEY = st.secrets["ODDS_API_KEY"]
 else:
     API_KEY = "3d3e3d0ffab7cf371cb31edcad75b90a"
 
+# Sidebar
 st.sidebar.header("Ρυθμίσεις")
+TOTAL_BANKROLL = st.sidebar.number_input("Συνολικό Ποσό Πονταρίσματος (€)", min_value=10, value=100, step=10)
+
 SPORT = st.sidebar.selectbox(
     "Επιλογή Πρωταθλήματος",
     [
@@ -32,7 +35,6 @@ def fetch_odds(api_key, sport_key):
         'apiKey': api_key,
         'regions': 'eu',
         'markets': 'h2h',
-        # Χρησιμοποιούμε τα ακριβή keys από τη λίστα σου
         'bookmakers': 'pinnacle,betsson,williamhill'
     }
     
@@ -43,49 +45,84 @@ def fetch_odds(api_key, sport_key):
         st.error(f"Σφάλμα API ({response.status_code}): {response.text}")
         return None
 
-if st.button("Ανανέωση Αποδόσεων 🔄"):
-    with st.spinner("Ανάκτηση δεδομένων..."):
+if st.button("Αναζήτηση Ευκαιριών Surebet 🔍"):
+    with st.spinner("Υπολογισμός αποδόσεων & έλεγχος για Arbitrage..."):
         data = fetch_odds(API_KEY, SPORT)
         
         if data:
-            rows = []
+            surebets_found = []
+            all_matches = []
+            
             for match in data:
                 home = match['home_team']
                 away = match['away_team']
                 commence_time = pd.to_datetime(match['commence_time']).strftime('%Y-%m-%d %H:%M')
                 
-                # Αρχικοποίηση τιμών
-                pin_1, pin_x, pin_2 = "-", "-", "-"
-                bts_1, bts_x, bts_2 = "-", "-", "-"
-                wh_1, wh_x, wh_2 = "-", "-", "-"
+                # Αποθήκευση όλων των τιμών ανά bookmaker
+                # Structure: { '1': [(price, bookmaker)], 'X': [...], '2': [...] }
+                best_1 = (0, "-")
+                best_x = (0, "-")
+                best_2 = (0, "-")
                 
                 for bookmaker in match.get('bookmakers', []):
-                    bm_key = bookmaker['key']
+                    bm_name = bookmaker['title']
                     for market in bookmaker.get('markets', []):
                         if market['key'] == 'h2h':
-                            outcomes = {out['name']: out['price'] for out in market['outcomes']}
-                            
-                            h = outcomes.get(home, "-")
-                            a = outcomes.get(away, "-")
-                            d = outcomes.get("Draw", "-")
-                            
-                            if bm_key == 'pinnacle':
-                                pin_1, pin_x, pin_2 = h, d, a
-                            elif bm_key == 'betsson':
-                                bts_1, bts_x, bts_2 = h, d, a
-                            elif bm_key == 'williamhill':
-                                wh_1, wh_x, wh_2 = h, d, a
+                            for outcome in market['outcomes']:
+                                name = outcome['name']
+                                price = outcome['price']
+                                
+                                if name == home and price > best_1[0]:
+                                    best_1 = (price, bm_name)
+                                elif name == "Draw" and price > best_x[0]:
+                                    best_x = (price, bm_name)
+                                elif name == away and price > best_2[0]:
+                                    best_2 = (price, bm_name)
                 
-                rows.append({
-                    "Έναρξη": commence_time,
-                    "Αγώνας": f"{home} vs {away}",
-                    "Pinnacle (1)": pin_1, "Pinnacle (X)": pin_x, "Pinnacle (2)": pin_2,
-                    "Betsson (1)": bts_1, "Betsson (X)": bts_x, "Betsson (2)": bts_2,
-                    "William Hill (1)": wh_1, "William Hill (X)": wh_x, "William Hill (2)": wh_2,
-                })
+                # Αν βρέθηκαν τιμές και για τα 3 σημεία
+                if best_1[0] > 0 and best_x[0] > 0 and best_2[0] > 0:
+                    implied_prob = (1 / best_1[0]) + (1 / best_x[0]) + (1 / best_2[0])
+                    profit_pct = (1 / implied_prob - 1) * 100
+                    
+                    match_info = {
+                        "Αγώνας": f"{home} vs {away}",
+                        "Έναρξη": commence_time,
+                        "Καλύτερος 1": f"{best_1[0]} ({best_1[1]})",
+                        "Καλύτερο X": f"{best_x[0]} ({best_x[1]})",
+                        "Καλύτερο 2": f"{best_2[0]} ({best_2[1]})",
+                        "Γκανιότα / Prob": f"{implied_prob*100:.2f}%",
+                        "Περιθώριο / Profit": round(profit_pct, 2)
+                    }
+                    
+                    all_matches.append(match_info)
+                    
+                    # Αν η συνολική πιθανότητα είναι < 1.0 (δηλαδή profit > 0), έχουμε Surebet!
+                    if implied_prob < 1.0:
+                        # Υπολογισμός πονταρισμάτων
+                        stake_1 = round((TOTAL_BANKROLL / best_1[0]) / implied_prob, 2)
+                        stake_x = round((TOTAL_BANKROLL / best_x[0]) / implied_prob, 2)
+                        stake_2 = round((TOTAL_BANKROLL / best_2[0]) / implied_prob, 2)
+                        guaranteed_payout = round(stake_1 * best_1[0], 2)
+                        guaranteed_profit = round(guaranteed_payout - TOTAL_BANKROLL, 2)
+                        
+                        surebets_found.append({
+                            "Αγώνας": f"{home} vs {away}",
+                            "Κέρδος %": f"+{profit_pct:.2f}%",
+                            "Σίγουρο Κέρδος (€)": f"€{guaranteed_profit}",
+                            "Ποντάρισμα (1)": f"€{stake_1} στο {best_1[0]} ({best_1[1]})",
+                            "Ποντάρισμα (X)": f"€{stake_x} στο {best_x[0]} ({best_x[1]})",
+                            "Ποντάρισμα (2)": f"€{stake_2} στο {best_2[0]} ({best_2[1]})",
+                        })
             
-            if rows:
-                df = pd.DataFrame(rows)
-                st.dataframe(df, use_container_width=True)
+            # Εμφάνιση Αποτελεσμάτων
+            if surebets_found:
+                st.success(f"🎉 Βρέθηκαν {len(surebets_found)} ευκαιρίες Surebet!")
+                st.dataframe(pd.DataFrame(surebets_found), use_container_width=True)
             else:
-                st.info("Δεν βρέθηκαν διαθέσιμες αποδόσεις.")
+                st.warning("⚠️ Δεν βρέθηκε κανένα Surebet με θετικό κέρδος αυτή τη στιγμή ανάμεσα σε αυτές τις 3 εταιρίες.")
+            
+            st.divider()
+            st.subheader("📊 Όλοι οι Αγώνες & Καλύτερες Συνδυαστικές Αποδόσεις")
+            if all_matches:
+                df_all = pd.DataFrame(all_matches)
+                st.dataframe(df_all, use_container_width=True)
