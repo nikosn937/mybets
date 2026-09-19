@@ -5,8 +5,8 @@ from scipy.stats import poisson
 
 st.set_page_config(page_title="Football Statistical Predictor", layout="wide")
 
-st.title("📊 Στατιστική Ανάλυση & Προγνωστικά Ποδοσφαίρου")
-st.subheader("Μοντέλο Poisson για τα Κύρια Πρωταθλήματα (Αγγλία, Γερμανία, Ισπανία, Ιταλία, Ελλάδα)")
+st.title("📊 Στατιστική Ανάλυση & Top 5 Σίγουρα Σημεία")
+st.subheader("Μοντέλο Poisson & Φιλτράρισμα Αγώνων ανά Ημερομηνία")
 
 # Επιλογή Πρωταθλήματος
 LEAGUES = {
@@ -21,15 +21,17 @@ st.sidebar.header("⚙️ Παράμετροι Ανάλυσης")
 selected_league_name = st.sidebar.selectbox("Επιλέξτε Πρωτάθλημα", list(LEAGUES.keys()))
 league_url = LEAGUES[selected_league_name]
 
-# Διορθωμένη γραμμή 24
-CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό Σιγουριάς (%)", min_value=50, max_value=85, value=65, step=5)
+CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό Σιγουριάς (%)", min_value=50, max_value=90, value=65, step=5)
 
 @st.cache_data(ttl=3600)
 def load_data(url):
     try:
         df = pd.read_csv(url)
-        # Κρατάμε τις απαραίτητες στήλες: HomeTeam, AwayTeam, FTHG (Full Time Home Goals), FTAG
+        # Κρατάμε τις απαραίτητες στήλες
         df = df[['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']].dropna()
+        # Μετατροπή ημερομηνίας σε datetime format
+        df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
+        df = df.dropna(subset=['Date'])
         return df
     except Exception as e:
         return None
@@ -41,7 +43,6 @@ def calculate_poisson_probs(df):
     
     teams = sorted(list(set(df['HomeTeam']).union(set(df['AwayTeam']))))
     
-    # Υπολογισμός επιθετικής & αμυντικής ισχύος
     stats = {}
     for team in teams:
         home_games = df[df['HomeTeam'] == team]
@@ -67,28 +68,21 @@ def predict_match(home_team, away_team, stats, avg_home_goals, avg_away_goals):
     h_stat = stats[home_team]
     a_stat = stats[away_team]
     
-    # Αναμενόμενα γκολ (xG)
     lambda_home = h_stat['home_attack'] * a_stat['away_defense'] * avg_home_goals
     lambda_away = a_stat['away_attack'] * h_stat['home_defense'] * avg_away_goals
     
-    # Πίνακας Πιθανοτήτων Σκορ (0 έως 5 γκολ)
     max_goals = 6
     home_probs = [poisson.pmf(i, lambda_home) for i in range(max_goals)]
     away_probs = [poisson.pmf(i, lambda_away) for i in range(max_goals)]
     
     score_matrix = np.outer(home_probs, away_probs)
     
-    # Πιθανότητες 1X2
     prob_home = np.sum(np.tril(score_matrix, -1))
     prob_draw = np.sum(np.diag(score_matrix))
     prob_away = np.sum(np.triu(score_matrix, 1))
     
-    # Πιθανότητες Over / Under
     prob_over_1_5 = np.sum(score_matrix[np.add.outer(range(max_goals), range(max_goals)) > 1.5])
     prob_over_2_5 = np.sum(score_matrix[np.add.outer(range(max_goals), range(max_goals)) > 2.5])
-    
-    # Πιθανότητα BTTS (Goal/Goal)
-    prob_btts = np.sum(score_matrix[1:, 1:])
     
     return {
         'xG_Home': round(lambda_home, 2),
@@ -96,53 +90,89 @@ def predict_match(home_team, away_team, stats, avg_home_goals, avg_away_goals):
         'Prob_1': prob_home,
         'Prob_X': prob_draw,
         'Prob_2': prob_away,
+        'Prob_1X': prob_home + prob_draw,
+        'Prob_X2': prob_away + prob_draw,
         'Prob_Over_1.5': prob_over_1_5,
-        'Prob_Over_2.5': prob_over_2_5,
-        'Prob_BTTS': prob_btts
+        'Prob_Over_2.5': prob_over_2_5
     }
 
 df = load_data(league_url)
 
 if df is not None and len(df) > 10:
     stats, avg_h, avg_a = calculate_poisson_probs(df)
-    teams = sorted(list(stats.keys()))
+    
+    # Φιλτράρισμα Ημερομηνιών στη Sidebar
+    min_date = df['Date'].min().date()
+    max_date = df['Date'].max().date()
     
     st.sidebar.divider()
-    st.sidebar.subheader("🔮 Ανάλυση Συγκεκριμένου Αγώνα")
-    home_select = st.sidebar.selectbox("Γηπεδούχος", teams, index=0)
-    away_select = st.sidebar.selectbox("Φιλοξενούμενος", teams, index=1 if len(teams)>1 else 0)
+    st.sidebar.subheader("📅 Φίλτρο Ημερομηνιών")
+    date_range = st.sidebar.date_input(
+        "Επιλέξτε εύρος ημερομηνιών",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date
+    )
     
-    if home_select != away_select:
-        pred = predict_match(home_select, away_select, stats, avg_h, avg_a)
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+        filtered_df = df[(df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)]
+    else:
+        filtered_df = df
         
-        st.divider()
-        st.subheader(f"⚔️ {home_select} vs {away_select}")
+    st.write(f"🔍 **Εμφάνιση αγώνων από {start_date.strftime('%d/%m/%Y')} έως {end_date.strftime('%d/%m/%Y')}** ({len(filtered_df)} αγώνες)")
+
+    # Υπολογισμός σημείων για όλους τους φιλτραρισμένους αγώνες
+    all_predictions = []
+    
+    for idx, row in filtered_df.iterrows():
+        h_team = row['HomeTeam']
+        a_team = row['AwayTeam']
+        match_date = row['Date'].strftime('%d/%m/%Y')
         
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("xG Γηπεδούχου", pred['xG_Home'])
-        col2.metric("xG Φιλοξενούμενου", pred['xG_Away'])
-        col3.metric("Πιθανότητα 1", f"{pred['Prob_1']*100:.1f}%")
-        col4.metric("Πιθανότητα Over 2.5", f"{pred['Prob_Over_2.5']*100:.1f}%")
+        pred = predict_match(h_team, a_team, stats, avg_h, avg_a)
         
-        # Εντοπισμός των πιο «Σίγουρων» Σημείων για τον αγώνα
-        tips = []
-        if pred['Prob_1'] * 100 >= CONFIDENCE_THRESHOLD:
-            tips.append((f"1 (Νίκη {home_select})", pred['Prob_1'] * 100))
-        if pred['Prob_2'] * 100 >= CONFIDENCE_THRESHOLD:
-            tips.append((f"2 (Νίκη {away_select})", pred['Prob_2'] * 100))
-        if (pred['Prob_1'] + pred['Prob_X']) * 100 >= CONFIDENCE_THRESHOLD:
-            tips.append(("1X (Διπλή Ευκαιρία)", (pred['Prob_1'] + pred['Prob_X']) * 100))
-        if pred['Prob_Over_1.5'] * 100 >= CONFIDENCE_THRESHOLD:
-            tips.append(("Over 1.5 Goals", pred['Prob_Over_1.5'] * 100))
-        if pred['Prob_Over_2.5'] * 100 >= CONFIDENCE_THRESHOLD:
-            tips.append(("Over 2.5 Goals", pred['Prob_Over_2.5'] * 100))
+        # Λίστα πιθανών σημείων ανά αγώνα
+        outcomes = [
+            ("1", pred['Prob_1']),
+            ("2", pred['Prob_2']),
+            ("1X", pred['Prob_1X']),
+            ("X2", pred['Prob_X2']),
+            ("Over 1.5", pred['Prob_Over_1.5']),
+            ("Over 2.5", pred['Prob_Over_2.5'])
+        ]
         
-        if tips:
-            st.success("🎯 **Προτεινόμενα Σημεία Υψηλής Πιθανότητας:**")
-            for tip, prob in tips:
-                st.write(f"- **{tip}** με στατιστική πιθανότητα **{prob:.1f}%**")
-        else:
-            st.info("ℹ️ Δεν βρέθηκαν σημεία που να ξεπερνούν το όριο σιγουριάς που θέσατε.")
-            
+        # Εντοπισμός του σημείου με την υψηλότερη πιθανότητα για τον συγκεκριμένο αγώνα
+        best_pick, best_prob = max(outcomes, key=lambda x: x[1])
+        
+        all_predictions.append({
+            "Ημερομηνία": match_date,
+            "Αγώνας": f"{h_team} vs {a_team}",
+            "Προτεινόμενο Σημείο": best_pick,
+            "Πιθανότητα %": round(best_prob * 100, 1),
+            "xG Γηπεδούχου": pred['xG_Home'],
+            "xG Φιλοξενούμενου": pred['xG_Away']
+        })
+        
+    df_preds = pd.DataFrame(all_predictions)
+    
+    # Ταξινόμηση βάσει Πιθανότητας % (Descending)
+    df_preds = df_preds.sort_values(by="Πιθανότητα %", ascending=False)
+    
+    # 🌟 ΕΜΦΑΝΙΣΗ TOP 5 ΣΙΓΟΥΡΩΝ ΣΗΜΕΙΩΝ
+    st.subheader("🔥 Top 5 «Σίγουρα» Σημεία της Επιλεγμένης Περιόδου")
+    top_5 = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD].head(5)
+    
+    if not top_5.empty:
+        st.dataframe(top_5, use_container_width=True)
+    else:
+        st.info(f"ℹ️ Δεν βρέθηκαν σημεία με πιθανότητα >= {CONFIDENCE_THRESHOLD}% στο επιλεγμένο εύρος ημερομηνιών.")
+        
+    st.divider()
+    
+    # Πλήρης Πίνακας Αγώνων
+    with st.expander("📊 Προβολή Όλων των Αναλυμένων Αγώνων"):
+        st.dataframe(df_preds, use_container_width=True)
+
 else:
-    st.error("⚠️ Δεν ήταν δυνατή η φόρτωση των στατιστικών δεδομένων για το συγκεκριμένο πρωτάθλημα.")
+    st.error("⚠️ Δεν ήταν δυνατή η φόρτωση των στατιστικών δεδομένων.")
