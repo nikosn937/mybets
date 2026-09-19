@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import poisson
 import math
+import re
 
 st.set_page_config(page_title="Advanced Pro Football Predictor 2026/27", layout="wide")
 
@@ -45,8 +46,22 @@ USE_WEIGHTS = st.sidebar.checkbox("Στάθμιση Πρόσφατης Φόρμ�
 USE_H2H = st.sidebar.checkbox("Ενεργοποίηση Προσαρμογής H2H (Προϊστορία)", value=True)
 RHO_DIXON = st.sidebar.slider("Συντελεστής Dixon-Coles (Rho)", min_value=-0.25, max_value=0.0, value=-0.13, step=0.01)
 
+def clean_team_name(name):
+    """Καθαρίζει τα ονόματα ομάδων για απόλυτη ταύτιση μεταξύ διαφορετικών CSV"""
+    if not isinstance(name, str):
+        return ""
+    name = name.lower().strip()
+    name = re.sub(r'[^a-z0-9]', '', name)
+    replacements = {
+        "manchesterunited": "manunited",
+        "manchester city": "mancity",
+        "nottinghamforest": "nottmforest"
+    }
+    return replacements.get(name, name)
+
 @st.cache_data(ttl=1800)
 def load_history_data(url):
+    """Φορτώνει τα δεδομένα της τρέχουσας σεζόν για τον υπολογισμό φόρμας/xG"""
     try:
         df = pd.read_csv(url)
         cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
@@ -56,8 +71,28 @@ def load_history_data(url):
     except Exception:
         return None
 
+@st.cache_data(ttl=3600)
+def load_multi_season_h2h(league_code):
+    """Φορτώνει αγώνες από τις 3 τελευταίες σεζόν για να βρει πλούσια προϊστορία"""
+    seasons = ["2627", "2526", "2425"]
+    dfs = []
+    for s in seasons:
+        url = f"https://www.football-data.co.uk/mmz4281/{s}/{league_code}.csv"
+        try:
+            df = pd.read_csv(url)
+            cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
+            df = df[cols].dropna()
+            dfs.append(df)
+        except Exception:
+            continue
+    if dfs:
+        full_df = pd.concat(dfs, ignore_index=True)
+        return full_df
+    return None
+
 @st.cache_data(ttl=1800)
 def load_fixtures_data(code):
+    """Φορτώνει το πρόγραμμα επερχόμενων αγώνων και τις αποδόσεις"""
     try:
         url = "https://www.football-data.co.uk/fixtures.csv"
         df = pd.read_csv(url)
@@ -70,17 +105,21 @@ def load_fixtures_data(code):
     except Exception:
         return None
 
-def calculate_h2h_adjustment(df_history, home_team, away_team, max_matches=6):
-    """
-    Υπολογίζει συντελεστή προσαρμογής (multiplier) για τα xG 
-    με βάση τους τελευταίους αγώνες H2H.
-    """
-    if df_history is None or df_history.empty:
+def calculate_h2h_adjustment(df_h2h_all, home_team, away_team, max_matches=6):
+    """Υπολογίζει συντελεστή H2H με βάση πολυετή δεδομένα και καθαρισμό ονομάτων"""
+    if df_h2h_all is None or df_h2h_all.empty:
         return 1.0, 1.0, "—"
         
-    h2h_matches = df_history[
-        ((df_history['HomeTeam'] == home_team) & (df_history['AwayTeam'] == away_team)) |
-        ((df_history['HomeTeam'] == away_team) & (df_history['AwayTeam'] == home_team))
+    clean_home = clean_team_name(home_team)
+    clean_away = clean_team_name(away_team)
+    
+    df = df_h2h_all.copy()
+    df['c_home'] = df['HomeTeam'].apply(clean_team_name)
+    df['c_away'] = df['AwayTeam'].apply(clean_team_name)
+    
+    h2h_matches = df[
+        ((df['c_home'] == clean_home) & (df['c_away'] == clean_away)) |
+        ((df['c_home'] == clean_away) & (df['c_away'] == clean_home))
     ].tail(max_matches)
     
     total_games = len(h2h_matches)
@@ -93,10 +132,10 @@ def calculate_h2h_adjustment(df_history, home_team, away_team, max_matches=6):
     
     for _, row in h2h_matches.iterrows():
         if row['FTHG'] > row['FTAG']:
-            if row['HomeTeam'] == home_team: home_wins += 1
+            if row['c_home'] == clean_home: home_wins += 1
             else: away_wins += 1
         elif row['FTAG'] > row['FTHG']:
-            if row['AwayTeam'] == away_team: away_wins += 1
+            if row['c_away'] == clean_away: away_wins += 1
             else: home_wins += 1
         else:
             draws += 1
@@ -104,15 +143,14 @@ def calculate_h2h_adjustment(df_history, home_team, away_team, max_matches=6):
     home_ratio = home_wins / total_games
     away_ratio = away_wins / total_games
     
-    # Ηπια προσαρμογή xG (εύρος 0.90 έως 1.10)
     h2h_home_mult = float(np.clip(1.0 + (home_ratio - 0.33) * 0.25, 0.90, 1.10))
     h2h_away_mult = float(np.clip(1.0 + (away_ratio - 0.33) * 0.25, 0.90, 1.10))
     
-    summary_str = f"{home_wins}-{draws}-{away_wins} (Ν-Ι-Η)"
+    summary_str = f"{home_wins}-{draws}-{away_wins} ({total_games} ματς)"
     return h2h_home_mult, h2h_away_mult, summary_str
 
 def calculate_dixon_coles_stats(df, use_weights=True):
-    """Υπολογισμός Εντός/Εκτός επιθετικής & αμυντικής ισχύος"""
+    """Υπολογισμός Εντός/Εκτός επιθετικής & αμυντικής ισχύος ομάδων"""
     if use_weights and len(df) > 1:
         n = len(df)
         weights = np.linspace(0.4, 1.6, n)
@@ -151,7 +189,7 @@ def calculate_dixon_coles_stats(df, use_weights=True):
     return stats, avg_home_goals, avg_away_goals
 
 def dixon_coles_adjustment(x, y, lambda_h, lambda_a, rho):
-    """Συντελεστής διόρθωσης Dixon-Coles για χαμηλά σκορ"""
+    """Διόρθωση Dixon-Coles για χαμηλά σκορ (0-0, 1-0, 0-1, 1-1)"""
     if x == 0 and y == 0:
         return 1.0 - (lambda_h * lambda_a * rho)
     elif x == 0 and y == 1:
@@ -164,11 +202,11 @@ def dixon_coles_adjustment(x, y, lambda_h, lambda_a, rho):
         return 1.0
 
 def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, a_adj=1.0, h2h_h_mult=1.0, h2h_a_mult=1.0):
+    """Υπολογισμός xG και πιθανοτήτων αγώνα"""
     default_stat = {'home_attack': 1, 'home_defense': 1, 'away_attack': 1, 'away_defense': 1}
     h_stat = stats.get(home_team, default_stat)
     a_stat = stats.get(away_team, default_stat)
     
-    # Συνδυασμός Home/Away Form * Απουσίες * H2H Multiplier
     lambda_home = h_stat['home_attack'] * a_stat['away_defense'] * avg_h * h_adj * h2h_h_mult
     lambda_away = a_stat['away_attack'] * h_stat['home_defense'] * avg_a * a_adj * h2h_a_mult
     
@@ -206,6 +244,7 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
 
 # Φόρτωση Δεδομένων
 df_history = load_history_data(history_url)
+df_h2h_all = load_multi_season_h2h(league_code)
 df_fixtures = load_fixtures_data(league_code)
 
 if df_history is not None and not df_history.empty and df_fixtures is not None and not df_fixtures.empty:
@@ -257,9 +296,9 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
         
         # Υπολογισμός H2H προσαρμογής
         if USE_H2H:
-            h2h_h_mult, h2h_a_mult, h2h_str = calculate_h2h_adjustment(df_history, h_team, a_team)
+            h2h_h_mult, h2h_a_mult, h2h_str = calculate_h2h_adjustment(df_h2h_all, h_team, a_team)
         else:
-            h2h_h_mult, h2h_a_mult, h2h_str = 1.0, 1.0, "Απενεργοποιημένο"
+            h2h_h_mult, h2h_a_mult, h2h_str = 1.0, 1.0, "Off"
             
         # Εφαρμογή προσαρμογής απουσιών
         h_adj = home_adj_factor if h_team == selected_adj_team else 1.0
