@@ -27,9 +27,7 @@ CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό Σιγ
 def load_data(url):
     try:
         df = pd.read_csv(url)
-        # Κρατάμε τις απαραίτητες στήλες
         df = df[['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']].dropna()
-        # Μετατροπή ημερομηνίας σε datetime format
         df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
         df = df.dropna(subset=['Date'])
         return df
@@ -101,7 +99,6 @@ df = load_data(league_url)
 if df is not None and len(df) > 10:
     stats, avg_h, avg_a = calculate_poisson_probs(df)
     
-    # Φιλτράρισμα Ημερομηνιών στη Sidebar
     min_date = df['Date'].min().date()
     max_date = df['Date'].max().date()
     
@@ -118,11 +115,11 @@ if df is not None and len(df) > 10:
         start_date, end_date = date_range
         filtered_df = df[(df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)]
     else:
+        start_date, end_date = min_date, max_date
         filtered_df = df
         
     st.write(f"🔍 **Εμφάνιση αγώνων από {start_date.strftime('%d/%m/%Y')} έως {end_date.strftime('%d/%m/%Y')}** ({len(filtered_df)} αγώνες)")
 
-    # Υπολογισμός σημείων για όλους τους φιλτραρισμένους αγώνες
     all_predictions = []
     
     for idx, row in filtered_df.iterrows():
@@ -132,7 +129,6 @@ if df is not None and len(df) > 10:
         
         pred = predict_match(h_team, a_team, stats, avg_h, avg_a)
         
-        # Λίστα πιθανών σημείων ανά αγώνα
         outcomes = [
             ("1", pred['Prob_1']),
             ("2", pred['Prob_2']),
@@ -142,7 +138,6 @@ if df is not None and len(df) > 10:
             ("Over 2.5", pred['Prob_Over_2.5'])
         ]
         
-        # Εντοπισμός του σημείου με την υψηλότερη πιθανότητα για τον συγκεκριμένο αγώνα
         best_pick, best_prob = max(outcomes, key=lambda x: x[1])
         
         all_predictions.append({
@@ -156,23 +151,24 @@ if df is not None and len(df) > 10:
         
     df_preds = pd.DataFrame(all_predictions)
     
-    # Ταξινόμηση βάσει Πιθανότητας % (Descending)
-    df_preds = df_preds.sort_values(by="Πιθανότητα %", ascending=False)
-    
-    # 🌟 ΕΜΦΑΝΙΣΗ TOP 5 ΣΙΓΟΥΡΩΝ ΣΗΜΕΙΩΝ
-    st.subheader("🔥 Top 5 «Σίγουρα» Σημεία της Επιλεγμένης Περιόδου")
-    top_5 = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD].head(5)
-    
-    if not top_5.empty:
-        st.dataframe(top_5, use_container_width=True)
-    else:
-        st.info(f"ℹ️ Δεν βρέθηκαν σημεία με πιθανότητα >= {CONFIDENCE_THRESHOLD}% στο επιλεγμένο εύρος ημερομηνιών.")
+    # Ασφαλής έλεγχος πριν το sort
+    if not df_preds.empty:
+        df_preds = df_preds.sort_values(by="Πιθανότητα %", ascending=False)
         
-    st.divider()
-    
-    # Πλήρης Πίνακας Αγώνων
-    with st.expander("📊 Προβολή Όλων των Αναλυμένων Αγώνων"):
-        st.dataframe(df_preds, use_container_width=True)
+        st.subheader("🔥 Top 5 «Σίγουρα» Σημεία της Επιλεγμένης Περιόδου")
+        top_5 = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD].head(5)
+        
+        if not top_5.empty:
+            st.dataframe(top_5, use_container_width=True)
+        else:
+            st.info(f"ℹ️ Δεν βρέθηκαν σημεία με πιθανότητα >= {CONFIDENCE_THRESHOLD}% στο επιλεγμένο εύρος ημερομηνιών.")
+            
+        st.divider()
+        
+        with st.expander("📊 Προβολή Όλων των Αναλυμένων Αγώνων"):
+            st.dataframe(df_preds, use_container_width=True)
+    else:
+        st.warning("⚠️ Δεν βρέθηκαν αγώνες στο συγκεκριμένο εύρος ημερομηνιών. Παρακαλώ επιλέξτε διαφορετικές ημερομηνίες.")
 
 else:
     st.error("⚠️ Δεν ήταν δυνατή η φόρτωση των στατιστικών δεδομένων.")
