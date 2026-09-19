@@ -3,68 +3,113 @@ import pandas as pd
 import numpy as np
 from scipy.stats import poisson
 
-st.set_page_config(page_title="Football Statistical Predictor", layout="wide")
+st.set_page_config(page_title="Football Statistical Predictor 2026/27", layout="wide")
 
-st.title("📊 Στατιστική Ανάλυση & Top 5 Σίγουρα Σημεία")
-st.subheader("Μοντέλο Poisson & Φιλτράρισμα Αγώνων ανά Ημερομηνία")
+st.title("📊 Προγνωστικά Επερχόμενων Αγώνων (Σεζόν 2026/2027)")
+st.subheader("Στατιστική Ανάλυση Poisson & Φόρμα Ομάδων")
 
-# Επιλογή Πρωταθλήματος
+# Ορισμός Σεζόν 2026/2027 (Κωδικός 2627)
+SEASON_CODE = "2627"
+
 LEAGUES = {
-    "Premier League (Αγγλία)": "https://www.football-data.co.uk/mmz4281/2526/E0.csv",
-    "La Liga (Ισπανία)": "https://www.football-data.co.uk/mmz4281/2526/SP1.csv",
-    "Bundesliga (Γερμανία)": "https://www.football-data.co.uk/mmz4281/2526/D1.csv",
-    "Serie A (Ιταλία)": "https://www.football-data.co.uk/mmz4281/2526/I1.csv",
-    "Super League (Ελλάδα)": "https://www.football-data.co.uk/mmz4281/2526/G1.csv"
+    "Premier League (Αγγλία)": {
+        "history": f"https://www.football-data.co.uk/mmz4281/{SEASON_CODE}/E0.csv",
+        "code": "E0"
+    },
+    "La Liga (Ισπανία)": {
+        "history": f"https://www.football-data.co.uk/mmz4281/{SEASON_CODE}/SP1.csv",
+        "code": "SP1"
+    },
+    "Bundesliga (Γερμανία)": {
+        "history": f"https://www.football-data.co.uk/mmz4281/{SEASON_CODE}/D1.csv",
+        "code": "D1"
+    },
+    "Serie A (Ιταλία)": {
+        "history": f"https://www.football-data.co.uk/mmz4281/{SEASON_CODE}/I1.csv",
+        "code": "I1"
+    },
+    "Super League (Ελλάδα)": {
+        "history": f"https://www.football-data.co.uk/mmz4281/{SEASON_CODE}/G1.csv",
+        "code": "G1"
+    }
 }
 
 st.sidebar.header("⚙️ Παράμετροι Ανάλυσης")
 selected_league_name = st.sidebar.selectbox("Επιλέξτε Πρωτάθλημα", list(LEAGUES.keys()))
-league_url = LEAGUES[selected_league_name]
+history_url = LEAGUES[selected_league_name]["history"]
+league_code = LEAGUES[selected_league_name]["code"]
 
 CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό Σιγουριάς (%)", min_value=50, max_value=90, value=65, step=5)
+RECENT_WEIGHT = st.sidebar.checkbox("Δώσε μεγαλύτερη βαρύτητα στα πρόσφατα παιχνίδια (Φόρμα)", value=True)
 
-@st.cache_data(ttl=3600)
-def load_data(url):
+@st.cache_data(ttl=1800)
+def load_history_data(url):
+    """Φορτώνει τα παιχνίδια της σεζόν 2026/2027"""
     try:
         df = pd.read_csv(url)
         df = df[['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']].dropna()
         df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
-        df = df.dropna(subset=['Date'])
-        return df
-    except Exception as e:
+        return df.dropna(subset=['Date']).sort_values('Date')
+    except Exception:
         return None
 
-def calculate_poisson_probs(df):
-    """Υπολογίζει τις πιθανότητες Poisson για κάθε ομάδα"""
-    avg_home_goals = df['FTHG'].mean()
-    avg_away_goals = df['FTAG'].mean()
+@st.cache_data(ttl=1800)
+def load_fixtures_data(code):
+    """Φορτώνει το πρόγραμμα των επερχόμενων αγώνων"""
+    try:
+        url = "https://www.football-data.co.uk/fixtures.csv"
+        df = pd.read_csv(url)
+        df = df[df['Div'] == code]
+        df = df[['Date', 'Time', 'HomeTeam', 'AwayTeam']].dropna(subset=['HomeTeam', 'AwayTeam'])
+        df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
+        return df.dropna(subset=['Date'])
+    except Exception:
+        return None
+
+def calculate_weighted_poisson(df, use_weights=True):
+    """Υπολογίζει τις δυνάμεις των ομάδων με βάση τη σεζόν 2026/2027"""
+    if use_weights and len(df) > 1:
+        n = len(df)
+        weights = np.linspace(0.5, 1.5, n)
+    else:
+        weights = np.ones(len(df))
+
+    avg_home_goals = np.average(df['FTHG'], weights=weights)
+    avg_away_goals = np.average(df['FTAG'], weights=weights)
     
     teams = sorted(list(set(df['HomeTeam']).union(set(df['AwayTeam']))))
-    
     stats = {}
-    for team in teams:
-        home_games = df[df['HomeTeam'] == team]
-        away_games = df[df['AwayTeam'] == team]
-        
-        home_scored = home_games['FTHG'].mean() if len(home_games) > 0 else avg_home_goals
-        home_conceded = home_games['FTAG'].mean() if len(home_games) > 0 else avg_away_goals
-        
-        away_scored = away_games['FTAG'].mean() if len(away_games) > 0 else avg_away_goals
-        away_conceded = away_games['FTHG'].mean() if len(away_games) > 0 else avg_home_goals
-        
-        stats[team] = {
-            'home_attack': home_scored / avg_home_goals if avg_home_goals > 0 else 1,
-            'home_defense': home_conceded / avg_away_goals if avg_away_goals > 0 else 1,
-            'away_attack': away_scored / avg_away_goals if avg_away_goals > 0 else 1,
-            'away_defense': away_conceded / avg_home_goals if avg_home_goals > 0 else 1
-        }
     
+    for team in teams:
+        h_idx = df['HomeTeam'] == team
+        a_idx = df['AwayTeam'] == team
+        
+        if h_idx.sum() > 0:
+            h_scored = np.average(df.loc[h_idx, 'FTHG'], weights=weights[h_idx])
+            h_conceded = np.average(df.loc[h_idx, 'FTAG'], weights=weights[h_idx])
+        else:
+            h_scored, h_conceded = avg_home_goals, avg_away_goals
+
+        if a_idx.sum() > 0:
+            a_scored = np.average(df.loc[a_idx, 'FTAG'], weights=weights[a_idx])
+            a_conceded = np.average(df.loc[a_idx, 'FTHG'], weights=weights[a_idx])
+        else:
+            a_scored, a_conceded = avg_away_goals, avg_home_goals
+            
+        stats[team] = {
+            'home_attack': h_scored / avg_home_goals if avg_home_goals > 0 else 1,
+            'home_defense': h_conceded / avg_away_goals if avg_away_goals > 0 else 1,
+            'away_attack': a_scored / avg_away_goals if avg_away_goals > 0 else 1,
+            'away_defense': a_conceded / avg_home_goals if avg_home_goals > 0 else 1
+        }
+        
     return stats, avg_home_goals, avg_away_goals
 
 def predict_match(home_team, away_team, stats, avg_home_goals, avg_away_goals):
-    """Υπολογίζει τα πιθανά σκορ και τις πιθανότητες αγορών"""
-    h_stat = stats[home_team]
-    a_stat = stats[away_team]
+    """Υπολογίζει πιθανότητες για έναν μελλοντικό αγώνα"""
+    default_stat = {'home_attack': 1, 'home_defense': 1, 'away_attack': 1, 'away_defense': 1}
+    h_stat = stats.get(home_team, default_stat)
+    a_stat = stats.get(away_team, default_stat)
     
     lambda_home = h_stat['home_attack'] * a_stat['away_defense'] * avg_home_goals
     lambda_away = a_stat['away_attack'] * h_stat['home_defense'] * avg_away_goals
@@ -94,38 +139,46 @@ def predict_match(home_team, away_team, stats, avg_home_goals, avg_away_goals):
         'Prob_Over_2.5': prob_over_2_5
     }
 
-df = load_data(league_url)
+# Φόρτωση Δεδομένων
+df_history = load_history_data(history_url)
+df_fixtures = load_fixtures_data(league_code)
 
-if df is not None and len(df) > 10:
-    stats, avg_h, avg_a = calculate_poisson_probs(df)
+if df_history is not None and not df_history.empty and df_fixtures is not None and not df_fixtures.empty:
     
-    min_date = df['Date'].min().date()
-    max_date = df['Date'].max().date()
+    # Υπολογισμός στατιστικών με βάση τους αγώνες της σεζόν 2026/2027
+    stats, avg_h, avg_a = calculate_weighted_poisson(df_history, RECENT_WEIGHT)
+    
+    st.success(f"✅ Φορτώθηκαν **{len(df_history)} διεξαχθέντες αγώνες** της σεζόν **2026/2027**.")
+    
+    # Φιλτράρισμα Ημερομηνιών Επερχόμενων Αγώνων
+    min_f_date = df_fixtures['Date'].min().date()
+    max_f_date = df_fixtures['Date'].max().date()
     
     st.sidebar.divider()
-    st.sidebar.subheader("📅 Φίλτρο Ημερομηνιών")
+    st.sidebar.subheader("📅 Φίλτρο Επερχόμενων Αγώνων")
     date_range = st.sidebar.date_input(
         "Επιλέξτε εύρος ημερομηνιών",
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date
+        value=(min_f_date, max_f_date),
+        min_value=min_f_date,
+        max_value=max_f_date
     )
     
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_date, end_date = date_range
-        filtered_df = df[(df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)]
+        filtered_fixtures = df_fixtures[(df_fixtures['Date'].dt.date >= start_date) & (df_fixtures['Date'].dt.date <= end_date)]
     else:
-        start_date, end_date = min_date, max_date
-        filtered_df = df
+        start_date, end_date = min_f_date, max_f_date
+        filtered_fixtures = df_fixtures
         
-    st.write(f"🔍 **Εμφάνιση αγώνων από {start_date.strftime('%d/%m/%Y')} έως {end_date.strftime('%d/%m/%Y')}** ({len(filtered_df)} αγώνες)")
+    st.info(f"📅 **Εμφάνιση επερχόμενων αγώνων από {start_date.strftime('%d/%m/%Y')} έως {end_date.strftime('%d/%m/%Y')}** ({len(filtered_fixtures)} αγώνες)")
 
     all_predictions = []
     
-    for idx, row in filtered_df.iterrows():
+    for idx, row in filtered_fixtures.iterrows():
         h_team = row['HomeTeam']
         a_team = row['AwayTeam']
         match_date = row['Date'].strftime('%d/%m/%Y')
+        match_time = row['Time'] if 'Time' in row and pd.notna(row['Time']) else ""
         
         pred = predict_match(h_team, a_team, stats, avg_h, avg_a)
         
@@ -142,6 +195,7 @@ if df is not None and len(df) > 10:
         
         all_predictions.append({
             "Ημερομηνία": match_date,
+            "Ώρα": match_time,
             "Αγώνας": f"{h_team} vs {a_team}",
             "Προτεινόμενο Σημείο": best_pick,
             "Πιθανότητα %": round(best_prob * 100, 1),
@@ -151,24 +205,25 @@ if df is not None and len(df) > 10:
         
     df_preds = pd.DataFrame(all_predictions)
     
-    # Ασφαλής έλεγχος πριν το sort
     if not df_preds.empty:
         df_preds = df_preds.sort_values(by="Πιθανότητα %", ascending=False)
         
-        st.subheader("🔥 Top 5 «Σίγουρα» Σημεία της Επιλεγμένης Περιόδου")
-        top_5 = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD].head(5)
+        st.subheader("🔥 Top Σίγουρα Σημεία για τους Επόμενους Αγώνες")
+        top_picks = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD]
         
-        if not top_5.empty:
-            st.dataframe(top_5, use_container_width=True)
+        if not top_picks.empty:
+            st.dataframe(top_picks, use_container_width=True)
         else:
-            st.info(f"ℹ️ Δεν βρέθηκαν σημεία με πιθανότητα >= {CONFIDENCE_THRESHOLD}% στο επιλεγμένο εύρος ημερομηνιών.")
+            st.warning(f"⚠️ Δεν βρέθηκαν επερχόμενα παιχνίδια με πιθανότητα >= {CONFIDENCE_THRESHOLD}% στο επιλεγμένο διάστημα.")
             
         st.divider()
         
-        with st.expander("📊 Προβολή Όλων των Αναλυμένων Αγώνων"):
+        with st.expander("📊 Προβολή Όλων των Αναλυμένων Επερχόμενων Αγώνων"):
             st.dataframe(df_preds, use_container_width=True)
     else:
-        st.warning("⚠️ Δεν βρέθηκαν αγώνες στο συγκεκριμένο εύρος ημερομηνιών. Παρακαλώ επιλέξτε διαφορετικές ημερομηνίες.")
+        st.warning("⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες στο συγκεκριμένο εύρος ημερομηνιών.")
 
+elif df_fixtures is None or df_fixtures.empty:
+    st.warning("ℹ️ Δεν υπάρχουν διαθέσιμοι επερχόμενοι αγώνες στο πρόγραμμα αυτή τη στιγμή για το συγκεκριμένο πρωτάθλημα.")
 else:
-    st.error("⚠️ Δεν ήταν δυνατή η φόρτωση των στατιστικών δεδομένων.")
+    st.error("⚠️ Σφάλμα κατά τη φόρτωση των στατιστικών δεδομένων της σεζόν 2026/2027.")
