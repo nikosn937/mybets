@@ -10,7 +10,7 @@ from google.genai import types
 st.set_page_config(page_title="Pro Football Predictor + AI Live Scanner", layout="wide")
 
 st.title("⚽ Pro Football Predictor (Dixon-Coles + AI Tactical Analyst)")
-st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση 10ετίας & AI Tactical Analyst")
+st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση 10ετίας & AI Tactical Analyst με Live Google Search")
 
 SEASON_CODE = "2627"
 
@@ -248,10 +248,10 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_Over_2.5': prob_over_2_5
     }
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     """
-    Εκτελεί ανάλυση AI με το gemini-3.6-flash.
+    Εκτελεί ανάλυση AI με το gemini-3.6-flash και Live Google Search Grounding.
     """
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -268,19 +268,28 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     {stats_summary}
     
     ΑΠΟΣΤΟΛΗ:
-    1. Αξιολόγησε τα ποσοτικά δεδομένα του μοντέλου (Expected Goals xG, Προϊστορία H2H 10ετίας, Πιθανότητες & Value Bet).
-    2. Δώσε μια σύντομη αναφορά (3-4 bullet points) με:
-       - 📊 **Τακτική Αξιολόγηση xG & Ισορροπίας**
-       - ⚽ **Εκτίμηση Ρυθμού & Goal Profile (Over/Under)**
-       - 🎯 **Τελικό AI Verdict & Διαχείριση Ρίσκου** (π.χ. Επιβεβαίωση σημείου, Reroute σε 1X/X2, ή Αποχή).
+    1. Χρησιμοποίησε την αναζήτηση στο Google (Google Search) για να βρεις τα πιο πρόσφατα νέα του αγώνα ({home_team} vs {away_team}):
+       - Τραυματισμοί, απουσίες βασικών παικτών, επιστροφές & τιμωρίες.
+       - Αλλαγή προπονητή, εσωτερικά προβλήματα ή κλίμα στα αποδυτήρια.
+       - Επιβάρυνση από συνεχόμενους αγώνες (π.χ. Ευρώπη, Κύπελλο).
+    2. Συνδύασε τα στατιστικά ευρήματα του μοντέλου με τις πληροφορίες από την αναζήτηση Google.
+    3. Δώσε μια σύντομη αναφορά (4 bullet points) με:
+       - 🚑 **Πρόσφατο Ρεπορτάζ & Απουσίες (Google Live Scan)**: Σημαντικότεροι τραυματισμοί/απουσίες ή ειδήσεις που βρέθηκαν.
+       - 📊 **Τακτική Αξιολόγηση xG & Ισορροπίας**: Πώς επηρεάζονται τα xG από τα νέα.
+       - ⚽ **Εκτίμηση Ρυθμού & Goal Profile (Over/Under)**.
+       - 🎯 **Τελικό AI Verdict & Διαχείριση Ρίσκου**: (Επιβεβαίωση σημείου, Reroute σε 1X/X2, ή Αποχή λόγω ρίσκου απουσιών).
     
-    Γράψε την απάντηση στα Ελληνικά, σύντομα και επαγγελματικά.
+    Γράψε την απάντηση στα Ελληνικά, σύντομα, επαγγελματικά και με σαφήνεια.
     """
 
     try:
+        # Ενεργοποίηση Google Search Tool
         response = client.models.generate_content(
             model='gemini-3.6-flash',
-            contents=prompt
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[{"google_search": {}}]
+            )
         )
         return response.text
     except Exception as e:
@@ -405,15 +414,15 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
 
         # --- ΕΝΟΤΗΤΑ AI ANALYST ---
         st.divider()
-        st.subheader("🤖 AI Tactical & Quantitative Analyst")
-        st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το Gemini 3.6 Flash ποσοτική και τακτική ανάλυση.")
+        st.subheader("🤖 AI Tactical Analyst (με Live Google Search)")
+        st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το Gemini 3.6 Flash ζωντανή αναζήτηση στο Google για ειδήσεις/απουσίες και ποσοτική ανάλυση.")
         
         selected_match = st.selectbox(
             "Επιλέξτε αγώνα για AI Ανάλυση:",
             options=df_preds['Αγώνας'].tolist()
         )
         
-        if st.button("🚀 Εκτέλεση AI Ανάλυσης"):
+        if st.button("🚀 Εκτέλεση AI Ανάλυσης & Google Scan"):
             match_row = df_preds[df_preds['Αγώνας'] == selected_match].iloc[0]
             h_team, a_team = selected_match.split(" vs ")
             m_date = match_row['Ημερομηνία']
@@ -425,10 +434,10 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             - Value Bet: {match_row['Value Bet']}
             """
             
-            with st.spinner("🔎 Πραγματοποιείται ανάλυση από το Gemini 3.6 Flash..."):
+            with st.spinner("🔎 Πραγματοποιείται αναζήτηση στο Google & ανάλυση από το Gemini 3.6 Flash..."):
                 ai_report = get_live_ai_analysis(h_team, a_team, m_date, summary)
                 
-            st.markdown("### 🤖 AI Report & Verdict (gemini-3.6-flash)")
+            st.markdown("### 🤖 AI Report & Verdict (Gemini 3.6 Flash + Google Search)")
             st.info(ai_report)
 
     else:
