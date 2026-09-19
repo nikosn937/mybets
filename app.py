@@ -244,10 +244,11 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_Over_2.5': prob_over_2_5
     }
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     """
-    Κάνει live αναζήτηση στο διαδίκτυο μέσω Gemini API (gemini-3.6-flash hardcoded) + Google Search Grounding 
-    για ειδήσεις/καιρό της τελευταίας στιγμής.
+    Κάνει ανάλυση μέσω Gemini API. Αν αποτύχει η live αναζήτηση λόγω Quota Exceeded (429),
+    εκτελεί fallback σε απλή ανάλυση AI χωρίς Google Search Grounding.
     """
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -264,28 +265,35 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     {stats_summary}
     
     ΑΠΟΣΤΟΛΗ:
-    1. Κάνε αναζήτηση στο διαδίκτυο για τα τελευταία νέα (last minute news), τραυματισμούς, τιμωρίες, πιθανές ενδεκάδες και τις καιρικές συνθήκες για τον αγώνα {home_team} vs {away_team}.
-    2. Αξιολόγησε αν τα νέα της τελευταίας στιγμής επιβεβαιώνουν ή αμφισβητούν την πρόβλεψη του στατιστικού μοντέλου.
-    3. Δώσε μια σύντομη αναφορά (3-4 bullet points) με:
-       - 🚑 **Σημαντικές Απουσίες / Ειδήσεις**
-       - 🌧️ **Καιρικές Συνθήκες & Γήπεδο**
+    1. Αξιολόγησε τα δεδομένα του μοντέλου (xG, Προϊστορία, Πιθανότητες).
+    2. Δώσε μια σύντομη αναφορά (3-4 bullet points) με:
+       - 📊 **Τακτική Αξιολόγηση xG & Φόρμας**
+       - ⚽ **Εκτίμηση Ρυθμού Αγώνα**
        - 🎯 **Τελικό AI Verdict & Ρίσκο** (π.χ. Επιβεβαίωση σημείου, Reroute σε 1X, ή Αποχή λόγω υψηλού ρίσκου).
     
     Γράψε την απάντηση στα Ελληνικά, σύντομα και επαγγελματικά.
     """
 
+    # 1. Πρώτη προσπάθεια: Με Live Google Search Grounding
     try:
-        # Hardcoded χρήση του μοντέλου gemini-3.6-flash
         response = client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=prompt,
+            model='gemini-2.5-flash',
+            contents=prompt + "\n\n(Κάνε live αναζήτηση στο διαδίκτυο για πρόσφατα νέα/τραυματισμούς).",
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())]
             )
         )
         return response.text
     except Exception as e:
-        return f"❌ Σφάλμα κατά τη live ανάλυση AI (gemini-3.6-flash): {e}"
+        # 2. Δεύτερη προσπάθεια (Fallback): Απλή ανάλυση AI αν εξαντληθεί το Quota (429) ή υπάρξει άλλο σφάλμα search
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            return f"⚠️ *(Σημείωση: Το όριο live αναζήτησης εξαντλήθηκε. Ακολουθεί στατιστική ανάλυση AI βάσει των xG δεδομένων)*\n\n" + response.text
+        except Exception as fallback_e:
+            return f"❌ Σφάλμα κατά τη λειτουργία AI: {fallback_e}"
 
 # --- ΚΥΡΙΩΣ ΡΟΗ ΕΦΑΡΜΟΓΗΣ ---
 
@@ -407,7 +415,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
         # --- ΕΝΟΤΗΤΑ LIVE AI ANALYST ---
         st.divider()
         st.subheader("🔍 Live AI Tactical & Last-Minute News Scanner")
-        st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το Gemini 3.6 Flash live αναζήτηση στο διαδίκτυο για τραυματισμούς, καιρό και ειδήσεις της τελευταίας στιγμής.")
+        st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το AI ανάλυση και live αναζήτηση στο διαδίκτυο.")
         
         selected_match = st.selectbox(
             "Επιλέξτε αγώνα για Live AI Ανάλυση:",
@@ -426,10 +434,10 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             - Value Bet: {match_row['Value Bet']}
             """
             
-            with st.spinner("🔎 Το Gemini 3.6 Flash πραγματοποιεί live αναζήτηση στο διαδίκτυο για ειδήσεις και καιρικές συνθήκες..."):
+            with st.spinner("🔎 Πραγματοποιείται ανάλυση AI..."):
                 ai_report = get_live_ai_analysis(h_team, a_team, m_date, summary)
                 
-            st.markdown("### 🤖 Live AI Report & Verdict (gemini-3.6-flash)")
+            st.markdown("### 🤖 Live AI Report & Verdict")
             st.info(ai_report)
 
     else:
