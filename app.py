@@ -9,8 +9,8 @@ from google.genai import types
 
 st.set_page_config(page_title="Pro Football Predictor + AI Live Scanner", layout="wide")
 
-st.title("⚽ Pro Football Predictor (Dixon-Coles + Live AI Search Analyst)")
-st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση & AI Tactical Analyst")
+st.title("⚽ Pro Football Predictor (Dixon-Coles + AI Tactical Analyst)")
+st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση 10ετίας & AI Tactical Analyst")
 
 SEASON_CODE = "2627"
 
@@ -45,7 +45,7 @@ league_code = LEAGUES[selected_league_name]["code"]
 
 CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό Σιγουριάς (%)", min_value=50, max_value=90, value=60, step=5)
 USE_WEIGHTS = st.sidebar.checkbox("Στάθμιση Πρόσφατης Φόρμας (Time-Decay)", value=True)
-USE_H2H = st.sidebar.checkbox("Ενεργοποίηση Προσαρμογής H2H (Προϊστορία)", value=True)
+USE_H2H = st.sidebar.checkbox("Ενεργοποίηση Προσαρμογής H2H (10ετής Προϊστορία)", value=True)
 RHO_DIXON = st.sidebar.slider("Συντελεστής Dixon-Coles (Rho)", min_value=-0.25, max_value=0.0, value=-0.13, step=0.01)
 
 def clean_team_name(name):
@@ -75,8 +75,11 @@ def load_history_data(url):
 
 @st.cache_data(ttl=3600)
 def load_multi_season_h2h(league_code):
-    """Φορτώνει αγώνες από τις 3 τελευταίες σεζόν για να βρει πλούσια προϊστορία"""
-    seasons = ["2627", "2526", "2425"]
+    """Φορτώνει αγώνες από τις τελευταίες 10 σεζόν για πλήρη προϊστορία"""
+    seasons = [
+        "2627", "2526", "2425", "2324", "2223", 
+        "2122", "2021", "1920", "1819", "1718"
+    ]
     dfs = []
     for s in seasons:
         url = f"https://www.football-data.co.uk/mmz4281/{s}/{league_code}.csv"
@@ -87,6 +90,7 @@ def load_multi_season_h2h(league_code):
             dfs.append(df)
         except Exception:
             continue
+            
     if dfs:
         full_df = pd.concat(dfs, ignore_index=True)
         return full_df
@@ -107,8 +111,8 @@ def load_fixtures_data(code):
     except Exception:
         return None
 
-def calculate_h2h_adjustment(df_h2h_all, home_team, away_team, max_matches=6):
-    """Υπολογίζει συντελεστή H2H με βάση πολυετή δεδομένα"""
+def calculate_h2h_adjustment(df_h2h_all, home_team, away_team, max_matches=20):
+    """Υπολογίζει συντελεστή H2H με βάση έως 20 αγώνες της 10ετίας"""
     if df_h2h_all is None or df_h2h_all.empty:
         return 1.0, 1.0, "—"
         
@@ -247,8 +251,7 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     """
-    Εκτελεί ανάλυση AI με το gemini-3.6-flash χωρίς εξωτερικό Search Tool
-    για αποφυγή σφαλμάτων Quota (429) & Not Found (404).
+    Εκτελεί ανάλυση AI με το gemini-3.6-flash.
     """
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -261,11 +264,11 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     
     Αντικείμενο: Αγώνας {home_team} vs {away_team} στις {date_str}.
     
-    Δεδομένα Μοντέλου Dixon-Coles/xG:
+    Δεδομένα Μοντέλου Dixon-Coles/xG & 10ετούς Προϊστορίας:
     {stats_summary}
     
     ΑΠΟΣΤΟΛΗ:
-    1. Αξιολόγησε τα ποσοτικά δεδομένα του μοντέλου (Expected Goals xG, Προϊστορία H2H, Πιθανότητες & Value Bet).
+    1. Αξιολόγησε τα ποσοτικά δεδομένα του μοντέλου (Expected Goals xG, Προϊστορία H2H 10ετίας, Πιθανότητες & Value Bet).
     2. Δώσε μια σύντομη αναφορά (3-4 bullet points) με:
        - 📊 **Τακτική Αξιολόγηση xG & Ισορροπίας**
        - ⚽ **Εκτίμηση Ρυθμού & Goal Profile (Over/Under)**
@@ -336,9 +339,9 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
         match_date = row['Date'].strftime('%d/%m/%Y')
         match_time = row['Time'] if 'Time' in row and pd.notna(row['Time']) else ""
         
-        # Υπολογισμός H2H προσαρμογής
+        # Υπολογισμός H2H προσαρμογής (έως 20 παιχνίδια)
         if USE_H2H:
-            h2h_h_mult, h2h_a_mult, h2h_str = calculate_h2h_adjustment(df_h2h_all, h_team, a_team)
+            h2h_h_mult, h2h_a_mult, h2h_str = calculate_h2h_adjustment(df_h2h_all, h_team, a_team, max_matches=20)
         else:
             h2h_h_mult, h2h_a_mult, h2h_str = 1.0, 1.0, "Off"
             
@@ -377,7 +380,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             "Προτεινόμενο Σημείο": best_pick,
             "Πιθανότητα %": round(best_prob * 100, 1),
             "Value Bet": value_flag,
-            "Προϊστορία (H2H)": h2h_str,
+            "Προϊστορία (H2H 10ετίας)": h2h_str,
             "xG Γηπεδούχου": pred['xG_Home'],
             "xG Φιλοξενούμενου": pred['xG_Away']
         })
@@ -387,7 +390,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
     if not df_preds.empty:
         df_preds = df_preds.sort_values(by="Πιθανότητα %", ascending=False)
         
-        st.subheader("🔥 Top Σημεία (Dixon-Coles, H2H & Value Bets)")
+        st.subheader("🔥 Top Σημεία (Dixon-Coles, 10ετές H2H & Value Bets)")
         top_picks = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD]
         
         if not top_picks.empty:
@@ -418,7 +421,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             summary = f"""
             - Προτεινόμενο Σημείο Μοντέλου: {match_row['Προτεινόμενο Σημείο']} ({match_row['Πιθανότητα %']}%)
             - xG: {match_row['xG Γηπεδούχου']} - {match_row['xG Φιλοξενούμενου']}
-            - Προϊστορία H2H: {match_row['Προϊστορία (H2H)']}
+            - Προϊστορία H2H (10ετίας): {match_row['Προϊστορία (H2H 10ετίας)']}
             - Value Bet: {match_row['Value Bet']}
             """
             
