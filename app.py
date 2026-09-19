@@ -4,11 +4,13 @@ import numpy as np
 from scipy.stats import poisson
 import math
 import re
+from google import genai
+from google.genai import types
 
-st.set_page_config(page_title="Advanced Pro Football Predictor 2026/27", layout="wide")
+st.set_page_config(page_title="Pro Football Predictor + AI Live Scanner", layout="wide")
 
-st.title("⚽ Advanced Pro Football Predictor (Dixon-Coles, Value Bets & H2H)")
-st.subheader("Σεζόν 2026/2027 | Επαγγελματικό Μοντέλο Πρόβλεψης")
+st.title("⚽ Pro Football Predictor (Dixon-Coles + Live AI Search Analyst)")
+st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση & Live AI News/Weather Scanner")
 
 SEASON_CODE = "2627"
 
@@ -242,7 +244,50 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_Over_2.5': prob_over_2_5
     }
 
-# Φόρτωση Δεδομένων
+def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
+    """
+    Κάνει live αναζήτηση στο διαδίκτυο μέσω Gemini 2.5 + Google Search Grounding 
+    για ειδήσεις/καιρό της τελευταίας στιγμής.
+    """
+    api_key = st.secrets.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return "⚠️ Δεν έχει οριστεί το GEMINI_API_KEY στα secrets του Streamlit."
+
+    client = genai.Client(api_key=api_key)
+
+    prompt = f"""
+    Είσαι ένας κορυφαίος αθλητικός αναλυτής και ποσοτικός αναλυτής στοιχημάτων (Quantitative Betting Analyst).
+    
+    Αντικείμενο: Αγώνας {home_team} vs {away_team} στις {date_str}.
+    
+    Δεδομένα Μοντέλου Dixon-Coles/xG:
+    {stats_summary}
+    
+    ΑΠΟΣΤΟΛΗ:
+    1. Κάνε αναζήτηση στο διαδίκτυο για τα τελευταία νέα (last minute news), τραυματισμούς, τιμωρίες, πιθανές ενδεκάδες και τις καιρικές συνθήκες για τον αγώνα {home_team} vs {away_team}.
+    2. Αξιολόγησε αν τα νέα της τελευταίας στιγμής επιβεβαιώνουν ή αμφισβητούν την πρόβλεψη του στατιστικού μοντέλου.
+    3. Δώσε μια σύντομη αναφορά (3-4 bullet points) με:
+       - 🚑 **Σημαντικές Απουσίες / Ειδήσεις**
+       - 🌧️ **Καιρικές Συνθήκες & Γήπεδο**
+       - 🎯 **Τελικό AI Verdict & Ρίσκο** (π.χ. Επιβεβαίωση σημείου, Reroute σε 1X, ή Αποχή λόγω υψηλού ρίσκου).
+    
+    Γράψε την απάντηση στα Ελληνικά, σύντομα και επαγγελματικά.
+    """
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())]
+            )
+        )
+        return response.text
+    except Exception as e:
+        return f"❌ Σφάλμα κατά τη live ανάλυση AI: {e}"
+
+# --- ΚΥΡΙΩΣ ΡΟΗ ΕΦΑΡΜΟΓΗΣ ---
+
 df_history = load_history_data(history_url)
 df_h2h_all = load_multi_season_h2h(league_code)
 df_fixtures = load_fixtures_data(league_code)
@@ -256,7 +301,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
     all_teams = sorted(list(stats.keys()))
     
     selected_adj_team = st.sidebar.selectbox("Επιλέξτε ομάδα για προσαρμογή", ["Καμία"] + all_teams)
-    home_adj_factor, away_adj_factor = 1.0, 1.0
+    home_adj_factor = 1.0
     
     if selected_adj_team != "Καμία":
         mod_type = st.sidebar.radio("Προσαρμογή λόγω απουσιών:", ["Πλήρης Ομάδα (100%)", "Mικρή Απουσία (-10%)", "Σημαντικές Απουσίες (-20%)"])
@@ -357,6 +402,35 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
         
         with st.expander("📊 Προβολή Όλων των Αναλυμένων Αγώνων"):
             st.dataframe(df_preds, use_container_width=True)
+
+        # --- ΕΝΟΤΗΤΑ LIVE AI ANALYST ---
+        st.divider()
+        st.subheader("🔍 Live AI Tactical & Last-Minute News Scanner")
+        st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το Gemini AI live αναζήτηση στο διαδίκτυο για τραυματισμούς, καιρό και ειδήσεις της τελευταίας στιγμής.")
+        
+        selected_match = st.selectbox(
+            "Επιλέξτε αγώνα για Live AI Ανάλυση:",
+            options=df_preds['Αγώνας'].tolist()
+        )
+        
+        if st.button("🚀 Εκτέλεση Live AI Scanner"):
+            match_row = df_preds[df_preds['Αγώνας'] == selected_match].iloc[0]
+            h_team, a_team = selected_match.split(" vs ")
+            m_date = match_row['Ημερομηνία']
+            
+            summary = f"""
+            - Προτεινόμενο Σημείο Μοντέλου: {match_row['Προτεινόμενο Σημείο']} ({match_row['Πιθανότητα %']}%)
+            - xG: {match_row['xG Γηπεδούχου']} - {match_row['xG Φιλοξενούμενου']}
+            - Προϊστορία H2H: {match_row['Προϊστορία (H2H)']}
+            - Value Bet: {match_row['Value Bet']}
+            """
+            
+            with st.spinner("🔎 Το AI πραγματοποιεί live αναζήτηση στο διαδίκτυο για ειδήσεις και καιρικές συνθήκες..."):
+                ai_report = get_live_ai_analysis(h_team, a_team, m_date, summary)
+                
+            st.markdown("### 🤖 Live AI Report & Verdict")
+            st.info(ai_report)
+
     else:
         st.warning("⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες στο συγκεκριμένο εύρος ημερομηνιών.")
 
