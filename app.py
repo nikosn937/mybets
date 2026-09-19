@@ -6,7 +6,7 @@ import math
 
 st.set_page_config(page_title="Advanced Pro Football Predictor 2026/27", layout="wide")
 
-st.title("⚽ Advanced Pro Football Predictor (Dixon-Coles & Value Bets)")
+st.title("⚽ Advanced Pro Football Predictor (Dixon-Coles, Value Bets & H2H)")
 st.subheader("Σεζόν 2026/2027 | Επαγγελματικό Μοντέλο Πρόβλεψης")
 
 SEASON_CODE = "2627"
@@ -34,6 +34,7 @@ LEAGUES = {
     }
 }
 
+# Sidebar Παράμετροι
 st.sidebar.header("⚙️ Παράμετροι Μοντέλου")
 selected_league_name = st.sidebar.selectbox("Επιλέξτε Πρωτάθλημα", list(LEAGUES.keys()))
 history_url = LEAGUES[selected_league_name]["history"]
@@ -41,6 +42,7 @@ league_code = LEAGUES[selected_league_name]["code"]
 
 CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό Σιγουριάς (%)", min_value=50, max_value=90, value=60, step=5)
 USE_WEIGHTS = st.sidebar.checkbox("Στάθμιση Πρόσφατης Φόρμας (Time-Decay)", value=True)
+USE_H2H = st.sidebar.checkbox("Ενεργοποίηση Προσαρμογής H2H (Προϊστορία)", value=True)
 RHO_DIXON = st.sidebar.slider("Συντελεστής Dixon-Coles (Rho)", min_value=-0.25, max_value=0.0, value=-0.13, step=0.01)
 
 @st.cache_data(ttl=1800)
@@ -60,7 +62,6 @@ def load_fixtures_data(code):
         url = "https://www.football-data.co.uk/fixtures.csv"
         df = pd.read_csv(url)
         df = df[df['Div'] == code]
-        # Κρατάμε και τις αποδόσεις B365 για υπολογισμό Value Bets
         cols = ['Date', 'Time', 'HomeTeam', 'AwayTeam', 'B365H', 'B365D', 'B365A']
         available_cols = [c for c in cols if c in df.columns]
         df = df[available_cols].dropna(subset=['HomeTeam', 'AwayTeam'])
@@ -68,6 +69,47 @@ def load_fixtures_data(code):
         return df.dropna(subset=['Date'])
     except Exception:
         return None
+
+def calculate_h2h_adjustment(df_history, home_team, away_team, max_matches=6):
+    """
+    Υπολογίζει συντελεστή προσαρμογής (multiplier) για τα xG 
+    με βάση τους τελευταίους αγώνες H2H.
+    """
+    if df_history is None or df_history.empty:
+        return 1.0, 1.0, "—"
+        
+    h2h_matches = df_history[
+        ((df_history['HomeTeam'] == home_team) & (df_history['AwayTeam'] == away_team)) |
+        ((df_history['HomeTeam'] == away_team) & (df_history['AwayTeam'] == home_team))
+    ].tail(max_matches)
+    
+    total_games = len(h2h_matches)
+    if total_games == 0:
+        return 1.0, 1.0, "Χωρίς H2H"
+    
+    home_wins = 0
+    away_wins = 0
+    draws = 0
+    
+    for _, row in h2h_matches.iterrows():
+        if row['FTHG'] > row['FTAG']:
+            if row['HomeTeam'] == home_team: home_wins += 1
+            else: away_wins += 1
+        elif row['FTAG'] > row['FTHG']:
+            if row['AwayTeam'] == away_team: away_wins += 1
+            else: home_wins += 1
+        else:
+            draws += 1
+            
+    home_ratio = home_wins / total_games
+    away_ratio = away_wins / total_games
+    
+    # Ηπια προσαρμογή xG (εύρος 0.90 έως 1.10)
+    h2h_home_mult = float(np.clip(1.0 + (home_ratio - 0.33) * 0.25, 0.90, 1.10))
+    h2h_away_mult = float(np.clip(1.0 + (away_ratio - 0.33) * 0.25, 0.90, 1.10))
+    
+    summary_str = f"{home_wins}-{draws}-{away_wins} (Ν-Ι-Η)"
+    return h2h_home_mult, h2h_away_mult, summary_str
 
 def calculate_dixon_coles_stats(df, use_weights=True):
     """Υπολογισμός Εντός/Εκτός επιθετικής & αμυντικής ισχύος"""
@@ -87,14 +129,12 @@ def calculate_dixon_coles_stats(df, use_weights=True):
         h_idx = df['HomeTeam'] == team
         a_idx = df['AwayTeam'] == team
         
-        # Εντός Έδρας Επίθεση & Άμυνα
         if h_idx.sum() > 0:
             h_scored = np.average(df.loc[h_idx, 'FTHG'], weights=weights[h_idx])
             h_conceded = np.average(df.loc[h_idx, 'FTAG'], weights=weights[h_idx])
         else:
             h_scored, h_conceded = avg_home_goals, avg_away_goals
 
-        # Εκτός Έδρας Επίθεση & Άμυνα
         if a_idx.sum() > 0:
             a_scored = np.average(df.loc[a_idx, 'FTAG'], weights=weights[a_idx])
             a_conceded = np.average(df.loc[a_idx, 'FTHG'], weights=weights[a_idx])
@@ -123,14 +163,14 @@ def dixon_coles_adjustment(x, y, lambda_h, lambda_a, rho):
     else:
         return 1.0
 
-def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, a_adj=1.0):
+def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, a_adj=1.0, h2h_h_mult=1.0, h2h_a_mult=1.0):
     default_stat = {'home_attack': 1, 'home_defense': 1, 'away_attack': 1, 'away_defense': 1}
     h_stat = stats.get(home_team, default_stat)
     a_stat = stats.get(away_team, default_stat)
     
-    # Ενσωμάτωση Home/Away Split & Χειροκίνητων Προσαρμογών (Απουσίες)
-    lambda_home = h_stat['home_attack'] * a_stat['away_defense'] * avg_h * h_adj
-    lambda_away = a_stat['away_attack'] * h_stat['home_defense'] * avg_a * a_adj
+    # Συνδυασμός Home/Away Form * Απουσίες * H2H Multiplier
+    lambda_home = h_stat['home_attack'] * a_stat['away_defense'] * avg_h * h_adj * h2h_h_mult
+    lambda_away = a_stat['away_attack'] * h_stat['home_defense'] * avg_a * a_adj * h2h_a_mult
     
     max_goals = 7
     score_matrix = np.zeros((max_goals, max_goals))
@@ -142,7 +182,6 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
             adj = dixon_coles_adjustment(x, y, lambda_home, lambda_away, rho)
             score_matrix[x, y] = p_x * p_y * adj
 
-    # Ομαλοποίηση πιθανοτήτων ώστε το άθροισμα να είναι 100%
     score_matrix = np.maximum(score_matrix, 0)
     score_matrix /= np.sum(score_matrix)
     
@@ -216,11 +255,18 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
         match_date = row['Date'].strftime('%d/%m/%Y')
         match_time = row['Time'] if 'Time' in row and pd.notna(row['Time']) else ""
         
-        # Εφαρμογή προσαρμογής αν επιλέχθηκε η συγκεκριμένη ομάδα
+        # Υπολογισμός H2H προσαρμογής
+        if USE_H2H:
+            h2h_h_mult, h2h_a_mult, h2h_str = calculate_h2h_adjustment(df_history, h_team, a_team)
+        else:
+            h2h_h_mult, h2h_a_mult, h2h_str = 1.0, 1.0, "Απενεργοποιημένο"
+            
+        # Εφαρμογή προσαρμογής απουσιών
         h_adj = home_adj_factor if h_team == selected_adj_team else 1.0
         a_adj = home_adj_factor if a_team == selected_adj_team else 1.0
         
-        pred = predict_match_dc(h_team, a_team, stats, avg_h, avg_a, RHO_DIXON, h_adj, a_adj)
+        # Πρόβλεψη Αγώνα
+        pred = predict_match_dc(h_team, a_team, stats, avg_h, avg_a, RHO_DIXON, h_adj, a_adj, h2h_h_mult, h2h_a_mult)
         
         outcomes = [
             ("1", pred['Prob_1']),
@@ -233,7 +279,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
         
         best_pick, best_prob = max(outcomes, key=lambda x: x[1])
         
-        # Έλεγχος για Value Bet αν υπάρχουν αποδόσεις Bet365
+        # Υπολογισμός Value Bet
         value_flag = "—"
         if 'B365H' in row and pd.notna(row['B365H']):
             odd_h = row['B365H']
@@ -250,6 +296,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             "Προτεινόμενο Σημείο": best_pick,
             "Πιθανότητα %": round(best_prob * 100, 1),
             "Value Bet": value_flag,
+            "Προϊστορία (H2H)": h2h_str,
             "xG Γηπεδούχου": pred['xG_Home'],
             "xG Φιλοξενούμενου": pred['xG_Away']
         })
@@ -259,7 +306,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
     if not df_preds.empty:
         df_preds = df_preds.sort_values(by="Πιθανότητα %", ascending=False)
         
-        st.subheader("🔥 Top Σημεία (Dixon-Coles & Value Bets)")
+        st.subheader("🔥 Top Σημεία (Dixon-Coles, H2H & Value Bets)")
         top_picks = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD]
         
         if not top_picks.empty:
