@@ -63,7 +63,7 @@ def clean_team_name(name):
 
 @st.cache_data(ttl=1800)
 def load_history_data(url):
-    """Φορτώνει τα δεδομένα της τρέχουσας σεζόν για τον υπολογισμό φόρμας/xG"""
+    """Φορτώνει τα δεδομένα της τρέχουσες σεζόν για τον υπολογισμό φόρμας/xG"""
     try:
         df = pd.read_csv(url)
         cols = ['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']
@@ -246,7 +246,7 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
 
 def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     """
-    Κάνει live αναζήτηση στο διαδίκτυο μέσω Gemini 2.5 + Google Search Grounding 
+    Κάνει live αναζήτηση στο διαδίκτυο μέσω Gemini API + Google Search Grounding 
     για ειδήσεις/καιρό της τελευταίας στιγμής.
     """
     api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -276,7 +276,7 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
 
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())]
