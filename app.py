@@ -2,20 +2,23 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="Arbitrage / Surebet Finder", layout="wide")
+st.set_page_config(page_title="Value Betting Engine", layout="wide")
 
-st.title("⚡ Αρχείο Εντοπισμού Surebets (Arbitrage)")
-st.subheader("Σύγκριση Pinnacle, Betsson & William Hill για Εγγυημένο Κέρδος")
+st.title("🎯 Value Betting Engine (+EV Finder)")
+st.subheader("Εντοπισμός Λανθασμένων Αποδόσεων με Βάση το Fair Model της Pinnacle")
 
-# API Key
+# Secrets / API Key
 if "ODDS_API_KEY" in st.secrets:
     API_KEY = st.secrets["ODDS_API_KEY"]
 else:
     API_KEY = "3d3e3d0ffab7cf371cb31edcad75b90a"
 
-# Sidebar
-st.sidebar.header("Ρυθμίσεις")
-TOTAL_BANKROLL = st.sidebar.number_input("Συνολικό Ποσό Πονταρίσματος (€)", min_value=10, value=100, step=10)
+# Sidebar Ρυθμίσεις
+st.sidebar.header("⚙️ Παράμετροι Αλγορίθμου")
+TOTAL_BANKROLL = st.sidebar.number_input("Συνολικό Κεφάλαιο (€)", min_value=50, value=500, step=50)
+MIN_EV = st.sidebar.slider("Ελάχιστο Απαιτούμενο Value (EV %)", min_value=1.0, max_value=15.0, value=3.0, step=0.5)
+KELLY_FRACTION = st.sidebar.slider("Κλάσμα Kelly (Ρύθμιση Ρίσκου)", min_value=0.1, max_value=1.0, value=0.25, step=0.05,
+                                  help="Το Fractional Kelly (π.χ. 0.25) προστατεύει το κεφάλαιο από διακυμάνσεις (variance).")
 
 SPORT = st.sidebar.selectbox(
     "Επιλογή Πρωταθλήματος",
@@ -45,84 +48,107 @@ def fetch_odds(api_key, sport_key):
         st.error(f"Σφάλμα API ({response.status_code}): {response.text}")
         return None
 
-if st.button("Αναζήτηση Ευκαιριών Surebet 🔍"):
-    with st.spinner("Υπολογισμός αποδόσεων & έλεγχος για Arbitrage..."):
+def remove_margin(pinnacle_odds):
+    """Αφαιρεί τη γκανιότα από τις αποδόσεις της Pinnacle για να βρει τις πραγματικές πιθανότητες."""
+    o1, ox, o2 = pinnacle_odds
+    if o1 <= 0 or ox <= 0 or o2 <= 0:
+        return None
+    
+    inv_sum = (1/o1) + (1/ox) + (1/o2)
+    # Proportional margin removal
+    true_prob_1 = (1/o1) / inv_sum
+    true_prob_x = (1/ox) / inv_sum
+    true_prob_2 = (1/o2) / inv_sum
+    
+    return true_prob_1, true_prob_x, true_prob_2
+
+if st.button("🚀 Αναζήτηση Value Bets"):
+    with st.spinner("Ανάλυση αγορών & υπολογισμός Fair Odds..."):
         data = fetch_odds(API_KEY, SPORT)
         
         if data:
-            surebets_found = []
-            all_matches = []
+            value_opportunities = []
             
             for match in data:
                 home = match['home_team']
                 away = match['away_team']
                 commence_time = pd.to_datetime(match['commence_time']).strftime('%Y-%m-%d %H:%M')
                 
-                # Αποθήκευση όλων των τιμών ανά bookmaker
-                # Structure: { '1': [(price, bookmaker)], 'X': [...], '2': [...] }
-                best_1 = (0, "-")
-                best_x = (0, "-")
-                best_2 = (0, "-")
+                pinnacle_odds = {}
+                other_bookmakers = {}
                 
+                # Συλλογή δεδομένων
                 for bookmaker in match.get('bookmakers', []):
-                    bm_name = bookmaker['title']
+                    bm_key = bookmaker['key']
+                    bm_title = bookmaker['title']
+                    
                     for market in bookmaker.get('markets', []):
                         if market['key'] == 'h2h':
-                            for outcome in market['outcomes']:
-                                name = outcome['name']
-                                price = outcome['price']
-                                
-                                if name == home and price > best_1[0]:
-                                    best_1 = (price, bm_name)
-                                elif name == "Draw" and price > best_x[0]:
-                                    best_x = (price, bm_name)
-                                elif name == away and price > best_2[0]:
-                                    best_2 = (price, bm_name)
+                            outcomes = {out['name']: out['price'] for out in market['outcomes']}
+                            
+                            if bm_key == 'pinnacle':
+                                pinnacle_odds = {
+                                    home: outcomes.get(home, 0),
+                                    "Draw": outcomes.get("Draw", 0),
+                                    away: outcomes.get(away, 0)
+                                }
+                            else:
+                                other_bookmakers[bm_title] = {
+                                    home: outcomes.get(home, 0),
+                                    "Draw": outcomes.get("Draw", 0),
+                                    away: outcomes.get(away, 0)
+                                }
                 
-                # Αν βρέθηκαν τιμές και για τα 3 σημεία
-                if best_1[0] > 0 and best_x[0] > 0 and best_2[0] > 0:
-                    implied_prob = (1 / best_1[0]) + (1 / best_x[0]) + (1 / best_2[0])
-                    profit_pct = (1 / implied_prob - 1) * 100
+                # Αν υπάρχει η Pinnacle ως sharp benchmark
+                if pinnacle_odds and all(pinnacle_odds.values()):
+                    p_home, p_draw, p_away = remove_margin((
+                        pinnacle_odds[home],
+                        pinnacle_odds["Draw"],
+                        pinnacle_odds[away]
+                    ))
                     
-                    match_info = {
-                        "Αγώνας": f"{home} vs {away}",
-                        "Έναρξη": commence_time,
-                        "Καλύτερος 1": f"{best_1[0]} ({best_1[1]})",
-                        "Καλύτερο X": f"{best_x[0]} ({best_x[1]})",
-                        "Καλύτερο 2": f"{best_2[0]} ({best_2[1]})",
-                        "Γκανιότα / Prob": f"{implied_prob*100:.2f}%",
-                        "Περιθώριο / Profit": round(profit_pct, 2)
+                    true_probabilities = {
+                        home: p_home,
+                        "Draw": p_draw,
+                        away: p_away
                     }
                     
-                    all_matches.append(match_info)
-                    
-                    # Αν η συνολική πιθανότητα είναι < 1.0 (δηλαδή profit > 0), έχουμε Surebet!
-                    if implied_prob < 1.0:
-                        # Υπολογισμός πονταρισμάτων
-                        stake_1 = round((TOTAL_BANKROLL / best_1[0]) / implied_prob, 2)
-                        stake_x = round((TOTAL_BANKROLL / best_x[0]) / implied_prob, 2)
-                        stake_2 = round((TOTAL_BANKROLL / best_2[0]) / implied_prob, 2)
-                        guaranteed_payout = round(stake_1 * best_1[0], 2)
-                        guaranteed_profit = round(guaranteed_payout - TOTAL_BANKROLL, 2)
-                        
-                        surebets_found.append({
-                            "Αγώνας": f"{home} vs {away}",
-                            "Κέρδος %": f"+{profit_pct:.2f}%",
-                            "Σίγουρο Κέρδος (€)": f"€{guaranteed_profit}",
-                            "Ποντάρισμα (1)": f"€{stake_1} στο {best_1[0]} ({best_1[1]})",
-                            "Ποντάρισμα (X)": f"€{stake_x} στο {best_x[0]} ({best_x[1]})",
-                            "Ποντάρισμα (2)": f"€{stake_2} στο {best_2[0]} ({best_2[1]})",
-                        })
+                    # Έλεγχος των άλλων εταιρειών για Value
+                    for bm_title, odds in other_bookmakers.items():
+                        for outcome_name, offered_odd in odds.items():
+                            if offered_odd > 1.0:
+                                true_p = true_probabilities[outcome_name]
+                                fair_odd = 1 / true_p
+                                
+                                # Υπολογισμός Expected Value (EV %)
+                                ev_pct = ((offered_odd * true_p) - 1) * 100
+                                
+                                # Εάν το EV ξεπερνά το όριο που έθεσε ο χρήστης
+                                if ev_pct >= MIN_EV:
+                                    # Υπολογισμός Kelly Stake
+                                    b = offered_odd - 1
+                                    q = 1 - true_p
+                                    full_kelly = (b * true_p - q) / b
+                                    
+                                    if full_kelly > 0:
+                                        stake_pct = full_kelly * KELLY_FRACTION
+                                        recommended_stake = round(TOTAL_BANKROLL * stake_pct, 2)
+                                        
+                                        value_opportunities.append({
+                                            "Αγώνας": f"{home} vs {away}",
+                                            "Έναρξη": commence_time,
+                                            "Σημείο": outcome_name,
+                                            "Εταιρία": bm_title,
+                                            "Προσφερόμενη Απόδοση": offered_odd,
+                                            "Δίκαιη Απόδοση (Fair)": round(fair_odd, 2),
+                                            "Value (EV %)": f"+{ev_pct:.2f}%",
+                                            "Προτεινόμενο Ποντάρισμα": f"€{recommended_stake} ({stake_pct*100:.1f}%)"
+                                        })
             
             # Εμφάνιση Αποτελεσμάτων
-            if surebets_found:
-                st.success(f"🎉 Βρέθηκαν {len(surebets_found)} ευκαιρίες Surebet!")
-                st.dataframe(pd.DataFrame(surebets_found), use_container_width=True)
+            if value_opportunities:
+                st.success(f"🎯 Βρέθηκαν {len(value_opportunities)} ευκαιρίες Value Betting!")
+                df_val = pd.DataFrame(value_opportunities)
+                st.dataframe(df_val, use_container_width=True)
             else:
-                st.warning("⚠️ Δεν βρέθηκε κανένα Surebet με θετικό κέρδος αυτή τη στιγμή ανάμεσα σε αυτές τις 3 εταιρίες.")
-            
-            st.divider()
-            st.subheader("📊 Όλοι οι Αγώνες & Καλύτερες Συνδυαστικές Αποδόσεις")
-            if all_matches:
-                df_all = pd.DataFrame(all_matches)
-                st.dataframe(df_all, use_container_width=True)
+                st.info(f"ℹ️ Δεν βρέθηκαν ευκαιρίες με EV >= +{MIN_EV}% αυτή τη στιγμή για αυτό το πρωτάθλημα.")
