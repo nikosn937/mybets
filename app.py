@@ -7,10 +7,10 @@ import re
 from google import genai
 from google.genai import types
 
-st.set_page_config(page_title="Pro Football Predictor + AI Live Scanner", layout="wide")
+st.set_page_config(page_title="Pro Football Predictor + Market Odds Scanner", layout="wide")
 
-st.title("⚽ Pro Football Predictor (Dixon-Coles + AI Tactical Analyst)")
-st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση 10ετίας & AI Tactical Analyst")
+st.title("⚽ Pro Football Predictor (Dixon-Coles + Market Odds Analysis + AI Analyst)")
+st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση, Σύγκριση Αποδόσεων Αγοράς & AI Validator")
 
 SEASON_CODE = "2627"
 
@@ -46,6 +46,7 @@ league_code = LEAGUES[selected_league_name]["code"]
 CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό Σιγουριάς (%)", min_value=50, max_value=90, value=60, step=5)
 USE_WEIGHTS = st.sidebar.checkbox("Στάθμιση Πρόσφατης Φόρμας (Time-Decay)", value=True)
 USE_H2H = st.sidebar.checkbox("Ενεργοποίηση Προσαρμογής H2H (10ετής Προϊστορία)", value=True)
+STRICT_MARKET_FILTER = st.sidebar.checkbox("🔒 Μόνο Επιβεβαιωμένα από την Αγορά (Market Consensus)", value=False)
 RHO_DIXON = st.sidebar.slider("Συντελεστής Dixon-Coles (Rho)", min_value=-0.25, max_value=0.0, value=-0.13, step=0.01)
 
 def clean_team_name(name):
@@ -98,12 +99,20 @@ def load_multi_season_h2h(league_code):
 
 @st.cache_data(ttl=1800)
 def load_fixtures_data(code):
-    """Φορτώνει το πρόγραμμα επερχόμενων αγώνων και τις αποδόσεις"""
+    """Φορτώνει το πρόγραμμα επερχόμενων αγώνων και όλες τις αποδόσεις εταιρειών"""
     try:
         url = "https://www.football-data.co.uk/fixtures.csv"
         df = pd.read_csv(url)
         df = df[df['Div'] == code]
-        cols = ['Date', 'Time', 'HomeTeam', 'AwayTeam', 'B365H', 'B365D', 'B365A']
+        
+        # Περιλαμβάνουμε όλες τις εταιρείες, Μέσους Όρους, Megistes Tims kai Over/Under
+        cols = [
+            'Date', 'Time', 'HomeTeam', 'AwayTeam', 
+            'B365H', 'B365D', 'B365A', 
+            'MaxH', 'MaxD', 'MaxA', 
+            'AvgH', 'AvgD', 'AvgA',
+            'Avg>2.5', 'Avg<2.5', 'Max>2.5', 'Max<2.5'
+        ]
         available_cols = [c for c in cols if c in df.columns]
         df = df[available_cols].dropna(subset=['HomeTeam', 'AwayTeam'])
         df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
@@ -251,7 +260,7 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     """
-    Εκτελεί ανάλυση AI με το gemini-3.6-flash.
+    Εκτελεί ανάλυση AI με το gemini-3.6-flash συνδυάζοντας Dixon-Coles xG & Αποδόσεις Αγοράς.
     """
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -264,17 +273,19 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     
     Αντικείμενο: Αγώνας {home_team} vs {away_team} στις {date_str}.
     
-    Δεδομένα Μοντέλου Dixon-Coles/xG & 10ετούς Προϊστορίας:
+    ΠΛΗΡΗ ΔΕΔΟΜΕΝΑ ΜΟΝΤΕΛΟΥ XG, 10ΕΤΙΑΣ & ΤΙΜΩΝ ΑΓΟΡΑΣ:
     {stats_summary}
     
     ΑΠΟΣΤΟΛΗ:
-    1. Αξιολόγησε τα ποσοτικά δεδομένα του μοντέλου (Expected Goals xG, Προϊστορία H2H 10ετίας, Πιθανότητες & Value Bet).
-    2. Δώσε μια σύντομη αναφορά (3-4 bullet points) με:
-       - 📊 **Τακτική Αξιολόγηση xG & Ισορροπίας**
-       - ⚽ **Εκτίμηση Ρυθμού & Goal Profile (Over/Under)**
-       - 🎯 **Τελικό AI Verdict & Διαχείριση Ρίσκου** (π.χ. Επιβεβαίωση σημείου, Reroute σε 1X/X2, ή Αποχή).
+    1. Αξιολόγησε τη συμφωνία μεταξύ των Expected Goals (xG) του μοντέλου και των Αποδόσεων της Αγοράς (B365, Avg, Max).
+    2. Εξέτασε αν η Αγορά (Market Implied Odds) επιβεβαιώνει την πρόβλεψη ή αν υπάρχει απόκλιση/ρίσκο.
+    3. Δώσε μια σύντομη αναφορά (3-4 bullet points) με:
+       - 📊 **Σύγκριση xG vs Αποδόσεων Αγοράς**: (Πώς τοποθετείται ο μέσος όρος της αγοράς σε σχέση με το μοντέλο).
+       - 💡 **Αξιολόγηση Value Bet & Megistis Timis (Max Odds)**: (Αν αξίζει το ρίσκο στην υψηλότερη τιμή της αγοράς).
+       - ⚽ **Εκτίμηση Over/Under & Ρυθμού**.
+       - 🎯 **Τελικό AI Verdict & Sigouria**: (Επιβεβαίωση σημείου, Reroute σε 1X/X2 ή Αποχή λόγω διαφωνίας με την αγορά).
     
-    Γράψε την απάντηση στα Ελληνικά, σύντομα και επαγγελματικά.
+    Γράψε την απάντηση στα Ελληνικά, σύντομα, τεκμηριωμένα και επαγγελματικά.
     """
 
     try:
@@ -363,23 +374,54 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
         
         best_pick, best_prob = max(outcomes, key=lambda x: x[1])
         
-        # Υπολογισμός Value Bet
-        value_flag = "—"
-        if 'B365H' in row and pd.notna(row['B365H']):
-            odd_h = row['B365H']
-            odd_a = row['B365A']
-            if best_pick == "1" and (pred['Prob_1'] > (1 / odd_h)):
-                value_flag = f"🔥 Value 1 (@{odd_h})"
-            elif best_pick == "2" and (pred['Prob_2'] > (1 / odd_a)):
-                value_flag = f"🔥 Value 2 (@{odd_a})"
+        # --- ΑΝΑΛΥΣΗ ΤΙΜΩΝ ΑΓΟΡΑΣ (MARKET ODDS ANALYSIS) ---
+        max_h = row.get('MaxH', row.get('B365H', np.nan))
+        max_d = row.get('MaxD', row.get('B365D', np.nan))
+        max_a = row.get('MaxA', row.get('B365A', np.nan))
         
+        avg_h = row.get('AvgH', row.get('B365H', np.nan))
+        avg_d = row.get('AvgD', row.get('B365D', np.nan))
+        avg_a = row.get('AvgA', row.get('B365A', np.nan))
+        
+        b365_h = row.get('B365H', np.nan)
+        b365_a = row.get('B365A', np.nan)
+        
+        # Υπολογισμός Value Bet στη μέγιστη τιμή αγοράς (Max Odds)
+        value_flag = "—"
+        market_confirmed = False
+        
+        if best_pick == "1" and pd.notna(max_h):
+            implied_prob_max = 1 / max_h
+            implied_prob_avg = 1 / avg_h if pd.notna(avg_h) else implied_prob_max
+            if pred['Prob_1'] > implied_prob_max:
+                value_flag = f"🔥 Value 1 (@{max_h} [Max])"
+            if pred['Prob_1'] >= implied_prob_avg:
+                market_confirmed = True
+                
+        elif best_pick == "2" and pd.notna(max_a):
+            implied_prob_max = 1 / max_a
+            implied_prob_avg = 1 / avg_a if pd.notna(avg_a) else implied_prob_max
+            if pred['Prob_2'] > implied_prob_max:
+                value_flag = f"🔥 Value 2 (@{max_a} [Max])"
+            if pred['Prob_2'] >= implied_prob_avg:
+                market_confirmed = True
+                
+        elif best_pick in ["1X", "X2", "Over 1.5", "Over 2.5"]:
+            market_confirmed = True # Γενική επιβεβαίωση για διπλές ευκαιρίες & γκολ
+            
+        # Φιλτράρισμα αν ενεργοποιηθεί το STRICT_MARKET_FILTER
+        if STRICT_MARKET_FILTER and not market_confirmed:
+            continue
+            
         all_predictions.append({
             "Ημερομηνία": match_date,
             "Ώρα": match_time,
             "Αγώνας": f"{h_team} vs {a_team}",
             "Προτεινόμενο Σημείο": best_pick,
             "Πιθανότητα %": round(best_prob * 100, 1),
-            "Value Bet": value_flag,
+            "Value Bet (Max Odds)": value_flag,
+            "Αποδόσεις (Avg 1-X-2)": f"{avg_h if pd.notna(avg_h) else '—'} | {avg_d if pd.notna(avg_d) else '—'} | {avg_a if pd.notna(avg_a) else '—'}",
+            "Μέγιστη Τιμή (Max 1-X-2)": f"{max_h if pd.notna(max_h) else '—'} | {max_d if pd.notna(max_d) else '—'} | {max_a if pd.notna(max_a) else '—'}",
             "Προϊστορία (H2H 10ετίας)": h2h_str,
             "xG Γηπεδούχου": pred['xG_Home'],
             "xG Φιλοξενούμενου": pred['xG_Away']
@@ -390,7 +432,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
     if not df_preds.empty:
         df_preds = df_preds.sort_values(by="Πιθανότητα %", ascending=False)
         
-        st.subheader("🔥 Top Σημεία (Dixon-Coles, 10ετές H2H & Value Bets)")
+        st.subheader("🔥 Top Σημεία (Dixon-Coles + Market Consensus & Value Bets)")
         top_picks = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD]
         
         if not top_picks.empty:
@@ -405,8 +447,8 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
 
         # --- ΕΝΟΤΗΤΑ AI ANALYST ---
         st.divider()
-        st.subheader("🤖 AI Tactical & Quantitative Analyst")
-        st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το Gemini 3.6 Flash ποσοτική και τακτική ανάλυση.")
+        st.subheader("🤖 AI Tactical & Market Odds Validator")
+        st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το Gemini 3.6 Flash ποσοτική ανάλυση συνδυάζοντας xG και Τιμές Αγοράς.")
         
         selected_match = st.selectbox(
             "Επιλέξτε αγώνα για AI Ανάλυση:",
@@ -421,14 +463,16 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             summary = f"""
             - Προτεινόμενο Σημείο Μοντέλου: {match_row['Προτεινόμενο Σημείο']} ({match_row['Πιθανότητα %']}%)
             - xG: {match_row['xG Γηπεδούχου']} - {match_row['xG Φιλοξενούμενου']}
+            - Μέσος Όρος Αγοράς (Avg 1-X-2): {match_row['Αποδόσεις (Avg 1-X-2)']}
+            - Μέγιστη Τιμή Αγοράς (Max 1-X-2): {match_row['Μέγιστη Τιμή (Max 1-X-2)']}
+            - Value Bet Status: {match_row['Value Bet (Max Odds)']}
             - Προϊστορία H2H (10ετίας): {match_row['Προϊστορία (H2H 10ετίας)']}
-            - Value Bet: {match_row['Value Bet']}
             """
             
-            with st.spinner("🔎 Πραγματοποιείται ανάλυση από το Gemini 3.6 Flash..."):
+            with st.spinner("🔎 Πραγματοποιείται διασταύρωση xG & Τιμών Αγοράς από το Gemini 3.6 Flash..."):
                 ai_report = get_live_ai_analysis(h_team, a_team, m_date, summary)
                 
-            st.markdown("### 🤖 AI Report & Verdict (gemini-3.6-flash)")
+            st.markdown("### 🤖 AI Report & Market Verdict (gemini-3.6-flash)")
             st.info(ai_report)
 
     else:
