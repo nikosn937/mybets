@@ -4,13 +4,14 @@ import numpy as np
 from scipy.stats import poisson
 import math
 import re
+import time
 from google import genai
 from google.genai import types
 
 st.set_page_config(page_title="Pro Football Predictor + AI Live Scanner", layout="wide")
 
 st.title("⚽ Pro Football Predictor (Dixon-Coles + AI Tactical Analyst)")
-st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση 10ετίας & AI Tactical Analyst")
+st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση 10ετίας, Exponential Decay & BTTS Model")
 
 SEASON_CODE = "2627"
 
@@ -44,7 +45,8 @@ history_url = LEAGUES[selected_league_name]["history"]
 league_code = LEAGUES[selected_league_name]["code"]
 
 CONFIDENCE_THRESHOLD = st.sidebar.slider("Ελάχιστο Ποσοστό Σιγουριάς (%)", min_value=50, max_value=90, value=60, step=5)
-USE_WEIGHTS = st.sidebar.checkbox("Στάθμιση Πρόσφατης Φόρμας (Time-Decay)", value=True)
+USE_WEIGHTS = st.sidebar.checkbox("Στάθμιση Φόρμας (Exponential Time-Decay)", value=True)
+DECAY_XI = st.sidebar.slider("Ρυθμός Απόσβεσης Χρόνου (Xi)", min_value=0.001, max_value=0.015, value=0.005, step=0.001, help="Υψηλότερη τιμή δίνει μεγαλύτερη έμφαση στα πολύ πρόσφατα παιχνίδια.")
 USE_H2H = st.sidebar.checkbox("Ενεργοποίηση Προσαρμογής H2H (10ετής Προϊστορία)", value=True)
 RHO_DIXON = st.sidebar.slider("Συντελεστής Dixon-Coles (Rho)", min_value=-0.25, max_value=0.0, value=-0.13, step=0.01)
 
@@ -155,11 +157,12 @@ def calculate_h2h_adjustment(df_h2h_all, home_team, away_team, max_matches=20):
     summary_str = f"{home_wins}-{draws}-{away_wins} ({total_games} ματς)"
     return h2h_home_mult, h2h_away_mult, summary_str
 
-def calculate_dixon_coles_stats(df, use_weights=True):
-    """Υπολογισμός Εντός/Εκτός επιθετικής & αμυντικής ισχύος ομάδων"""
+def calculate_dixon_coles_stats(df, use_weights=True, xi=0.005):
+    """Υπολογισμός ισχύος με Εκθετική Απόσβεση Χρόνου (Exponential Time-Decay)"""
     if use_weights and len(df) > 1:
-        n = len(df)
-        weights = np.linspace(0.4, 1.6, n)
+        max_date = df['Date'].max()
+        days_diff = (max_date - df['Date']).dt.days
+        weights = np.exp(-xi * days_diff)
     else:
         weights = np.ones(len(df))
 
@@ -208,7 +211,7 @@ def dixon_coles_adjustment(x, y, lambda_h, lambda_a, rho):
         return 1.0
 
 def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, a_adj=1.0, h2h_h_mult=1.0, h2h_a_mult=1.0):
-    """Υπολογισμός xG και πιθανοτήτων αγώνα"""
+    """Υπολογισμός xG, Πιθανοτήτων, BTTS & Top 3 Σκορ"""
     default_stat = {'home_attack': 1, 'home_defense': 1, 'away_attack': 1, 'away_defense': 1}
     h_stat = stats.get(home_team, default_stat)
     a_stat = stats.get(away_team, default_stat)
@@ -236,6 +239,18 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
     prob_over_1_5 = np.sum(score_matrix[np.add.outer(range(max_goals), range(max_goals)) > 1.5])
     prob_over_2_5 = np.sum(score_matrix[np.add.outer(range(max_goals), range(max_goals)) > 2.5])
     
+    # --- YΠΟΛΟΓΙΣΜΟΣ BTTS (GG / NG) ---
+    prob_btts_yes = np.sum(score_matrix[1:, 1:])
+    prob_btts_no = 1.0 - prob_btts_yes
+    
+    # --- TOP 3 ΠΙΘΑΝΟΤΕΡΑ ΣΚΟΡ ---
+    score_tuples = []
+    for x in range(max_goals):
+        for y in range(max_goals):
+            score_tuples.append((f"{x}-{y}", score_matrix[x, y]))
+    score_tuples.sort(key=lambda item: item[1], reverse=True)
+    top_3_scores = [f"{s[0]} ({round(s[1]*100, 1)}%)" for s in score_tuples[:3]]
+    
     return {
         'xG_Home': round(lambda_home, 2),
         'xG_Away': round(lambda_away, 2),
@@ -245,13 +260,16 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_1X': prob_home + prob_draw,
         'Prob_X2': prob_away + prob_draw,
         'Prob_Over_1.5': prob_over_1_5,
-        'Prob_Over_2.5': prob_over_2_5
+        'Prob_Over_2.5': prob_over_2_5,
+        'Prob_GG': prob_btts_yes,
+        'Prob_NG': prob_btts_no,
+        'Top_Scores': ", ".join(top_3_scores)
     }
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     """
-    Εκτελεί ανάλυση AI με το gemini-3.6-flash.
+    Εκτελεί ανάλυση AI με ανθεκτικότητα σε σφάλματα 503 (Retries & Fallback).
     """
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -264,27 +282,38 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     
     Αντικείμενο: Αγώνας {home_team} vs {away_team} στις {date_str}.
     
-    Δεδομένα Μοντέλου Dixon-Coles/xG & 10ετούς Προϊστορίας:
+    Δεδομένα Μοντέλου Dixon-Coles/xG, Exponential Time-Decay & BTTS:
     {stats_summary}
     
     ΑΠΟΣΤΟΛΗ:
-    1. Αξιολόγησε τα ποσοτικά δεδομένα του μοντέλου (Expected Goals xG, Προϊστορία H2H 10ετίας, Πιθανότητες & Value Bet).
+    1. Αξιολόγησε τα ποσοτικά δεδομένα (Expected Goals xG, GG/NG, Πιθανότερα Σκορ & Value Bet).
     2. Δώσε μια σύντομη αναφορά (3-4 bullet points) με:
        - 📊 **Τακτική Αξιολόγηση xG & Ισορροπίας**
-       - ⚽ **Εκτίμηση Ρυθμού & Goal Profile (Over/Under)**
-       - 🎯 **Τελικό AI Verdict & Διαχείριση Ρίσκου** (π.χ. Επιβεβαίωση σημείου, Reroute σε 1X/X2, ή Αποχή).
+       - ⚽ **Εκτίμηση BTTS (GG/NG) & Πιθανότερου Σκορ**
+       - 🎯 **Τελικό AI Verdict & Διαχείριση Ρίσκου** (Επιβεβαίωση σημείου, Reroute σε 1X/X2/GG, ή Αποχή).
     
     Γράψε την απάντηση στα Ελληνικά, σύντομα και επαγγελματικά.
     """
 
-    try:
-        response = client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=prompt
-        )
-        return response.text
-    except Exception as e:
-        return f"❌ Σφάλμα κατά τη λειτουργία AI: {e}"
+    models_to_try = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+
+    for model_name in models_to_try:
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                return response.text
+            except Exception as e:
+                err_msg = str(e)
+                if "503" in err_msg or "UNAVAILABLE" in err_msg:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                else:
+                    return f"❌ Σφάλμα κατά τη λειτουργία AI: {e}"
+
+    return "⚠️ Οι διακομιστές της Google είναι προσωρινά υπερφορτωμένοι (503). Παρακαλώ δοκιμάστε ξανά σε λίγα δευτερόλεπτα."
 
 # --- ΚΥΡΙΩΣ ΡΟΗ ΕΦΑΡΜΟΓΗΣ ---
 
@@ -294,7 +323,7 @@ df_fixtures = load_fixtures_data(league_code)
 
 if df_history is not None and not df_history.empty and df_fixtures is not None and not df_fixtures.empty:
     
-    stats, avg_h, avg_a = calculate_dixon_coles_stats(df_history, USE_WEIGHTS)
+    stats, avg_h, avg_a = calculate_dixon_coles_stats(df_history, USE_WEIGHTS, DECAY_XI)
     
     st.sidebar.divider()
     st.sidebar.subheader("🚑 Διαχείριση Απουσιών / Φόρμας")
@@ -315,21 +344,27 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
     
     st.sidebar.divider()
     st.sidebar.subheader("📅 Φίλτρο Επερχόμενων Αγώνων")
+    
     date_range = st.sidebar.date_input(
         "Επιλέξτε εύρος ημερομηνιών",
-        value=(min_f_date, max_f_date),
-        min_value=min_f_date,
-        max_value=max_f_date
+        value=(min_f_date, max_f_date)
     )
     
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_date, end_date = date_range
-        filtered_fixtures = df_fixtures[(df_fixtures['Date'].dt.date >= start_date) & (df_fixtures['Date'].dt.date <= end_date)]
+        filtered_fixtures = df_fixtures[
+            (df_fixtures['Date'].dt.date >= start_date) & 
+            (df_fixtures['Date'].dt.date <= end_date)
+        ]
+    elif isinstance(date_range, tuple) and len(date_range) == 1:
+        start_date = date_range[0]
+        end_date = max_f_date
+        filtered_fixtures = df_fixtures[df_fixtures['Date'].dt.date >= start_date]
     else:
         start_date, end_date = min_f_date, max_f_date
         filtered_fixtures = df_fixtures
         
-    st.info(f"📅 **Εμφάνιση επερχόμενων αγώνων από {start_date.strftime('%d/%m/%Y')} έως {end_date.strftime('%d/%m/%Y')}** ({len(filtered_fixtures)} αγώνες)")
+    st.info(f"📅 **Εμφάνιση επερχόμενων αγώνων από {start_date.strftime('%d/%m/%Y')} έως {end_date.strftime('%d/%m/%Y')}** ({len(filtered_fixtures)} αγώνες βρέθηκαν)")
 
     all_predictions = []
     
@@ -339,17 +374,14 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
         match_date = row['Date'].strftime('%d/%m/%Y')
         match_time = row['Time'] if 'Time' in row and pd.notna(row['Time']) else ""
         
-        # Υπολογισμός H2H προσαρμογής (έως 20 παιχνίδια)
         if USE_H2H:
             h2h_h_mult, h2h_a_mult, h2h_str = calculate_h2h_adjustment(df_h2h_all, h_team, a_team, max_matches=20)
         else:
             h2h_h_mult, h2h_a_mult, h2h_str = 1.0, 1.0, "Off"
             
-        # Εφαρμογή προσαρμογής απουσιών
         h_adj = home_adj_factor if h_team == selected_adj_team else 1.0
         a_adj = home_adj_factor if a_team == selected_adj_team else 1.0
         
-        # Πρόβλεψη Αγώνα
         pred = predict_match_dc(h_team, a_team, stats, avg_h, avg_a, RHO_DIXON, h_adj, a_adj, h2h_h_mult, h2h_a_mult)
         
         outcomes = [
@@ -358,12 +390,13 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             ("1X", pred['Prob_1X']),
             ("X2", pred['Prob_X2']),
             ("Over 1.5", pred['Prob_Over_1.5']),
-            ("Over 2.5", pred['Prob_Over_2.5'])
+            ("Over 2.5", pred['Prob_Over_2.5']),
+            ("GG (Goal/Goal)", pred['Prob_GG']),
+            ("NG (No Goal)", pred['Prob_NG'])
         ]
         
         best_pick, best_prob = max(outcomes, key=lambda x: x[1])
         
-        # Υπολογισμός Value Bet
         value_flag = "—"
         if 'B365H' in row and pd.notna(row['B365H']):
             odd_h = row['B365H']
@@ -379,6 +412,8 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             "Αγώνας": f"{h_team} vs {a_team}",
             "Προτεινόμενο Σημείο": best_pick,
             "Πιθανότητα %": round(best_prob * 100, 1),
+            "GG %": round(pred['Prob_GG'] * 100, 1),
+            "Πιθανότερα Σκορ": pred['Top_Scores'],
             "Value Bet": value_flag,
             "Προϊστορία (H2H 10ετίας)": h2h_str,
             "xG Γηπεδούχου": pred['xG_Home'],
@@ -390,7 +425,7 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
     if not df_preds.empty:
         df_preds = df_preds.sort_values(by="Πιθανότητα %", ascending=False)
         
-        st.subheader("🔥 Top Σημεία (Dixon-Coles, 10ετές H2H & Value Bets)")
+        st.subheader("🔥 Top Σημεία (Dixon-Coles + Time-Decay, GG/NG & Value Bets)")
         top_picks = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD]
         
         if not top_picks.empty:
@@ -421,14 +456,16 @@ if df_history is not None and not df_history.empty and df_fixtures is not None a
             summary = f"""
             - Προτεινόμενο Σημείο Μοντέλου: {match_row['Προτεινόμενο Σημείο']} ({match_row['Πιθανότητα %']}%)
             - xG: {match_row['xG Γηπεδούχου']} - {match_row['xG Φιλοξενούμενου']}
+            - Πιθανότητα GG (Goal/Goal): {match_row['GG %']}%
+            - Πιθανότερα Σκορ: {match_row['Πιθανότερα Σκορ']}
             - Προϊστορία H2H (10ετίας): {match_row['Προϊστορία (H2H 10ετίας)']}
             - Value Bet: {match_row['Value Bet']}
             """
             
-            with st.spinner("🔎 Πραγματοποιείται ανάλυση από το Gemini 3.6 Flash..."):
+            with st.spinner("🔎 Πραγματοποιείται ανάλυση από το Gemini..."):
                 ai_report = get_live_ai_analysis(h_team, a_team, m_date, summary)
                 
-            st.markdown("### 🤖 AI Report & Verdict (gemini-3.6-flash)")
+            st.markdown("### 🤖 AI Report & Verdict")
             st.info(ai_report)
 
     else:
@@ -438,3 +475,12 @@ elif df_fixtures is None or df_fixtures.empty:
     st.warning("ℹ️ Δεν υπάρχουν διαθέσιμοι επερχόμενοι αγώνες στο πρόγραμμα αυτή τη στιγμή για το συγκεκριμένο πρωτάθλημα.")
 else:
     st.error("⚠️ Σφάλμα κατά τη φόρτωση των στατιστικών δεδομένων.")
+```[cite: 2]
+
+---
+
+### 🔥 Τι κερδίζετε με αυτή την ενημέρωση
+1. **Δυναμικό Slider `Xi` στη Sidebar**: Μπορείτε πλέον να ρυθμίζετε πόσο "επιθετικά" θα αποσβένονται τα παλαιότερα παιχνίδια (προεπιλογή `0.005`)[cite: 2].
+2. **Νέα Στήλη `GG %`**: Βλέπετε αμέσως την πιθανότητα να σκοράρουν και οι δύο ομάδες[cite: 2].
+3. **Νέα Στήλη `Πιθανότερα Σκορ`**: Εμφανίζονται τα 3 επικρατέστερα ακριβή σκορ με τα ποσοστά τους (π.χ. `1-1 (12.7%), 1-0 (11.5%), 0-1 (9.0%)`)[cite: 2].
+4. **Εμπλουτισμένο AI Prompt**: Το AI λαμβάνει πλέον και τα δεδομένα GG% και τα πιθανότερα σκορ, δίνοντας ακόμη πιο ολοκληρωμένα verdicts[cite: 2].
