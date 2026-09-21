@@ -295,7 +295,7 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     Γράψε την απάντηση στα Ελληνικά, σύντομα και επαγγελματικά.
     """
 
-   models_to_try = ['gemini-3.6-flash']
+       models_to_try = ['gemini-3.6-flash']
 
     for model_name in models_to_try:
         for attempt in range(3):
