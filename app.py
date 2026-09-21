@@ -269,7 +269,7 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     """
-    Εκτελεί ανάλυση AI με ανθεκτικότητα σε σφάλματα 503 (Retries & Fallback).
+    Εκτελεί ανάλυση AI με ανθεκτικότητα σε σφάλματα (Retries & Fallback).
     """
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -295,7 +295,7 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
     Γράψε την απάντηση στα Ελληνικά, σύντομα και επαγγελματικά.
     """
 
-       models_to_try = ['gemini-3.6-flash']
+    models_to_try = ['gemini-3.6-flash', 'gemini-1.5-flash']
 
     for model_name in models_to_try:
         for attempt in range(3):
@@ -310,10 +310,12 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
                 if "503" in err_msg or "UNAVAILABLE" in err_msg:
                     time.sleep(2 * (attempt + 1))
                     continue
+                elif "404" in err_msg or "NOT_FOUND" in err_msg:
+                    break
                 else:
                     return f"❌ Σφάλμα κατά τη λειτουργία AI: {e}"
 
-    return "⚠️ Οι διακομιστές της Google είναι προσωρινά υπερφορτωμένοι (503). Παρακαλώ δοκιμάστε ξανά σε λίγα δευτερόλεπτα."
+    return "⚠️ Οι διακομιστές της Google είναι προσωρινά μη διαθέσιμοι. Παρακαλώ δοκιμάστε ξανά σε λίγα δευτερόλεπτα."
 
 # --- ΚΥΡΙΩΣ ΡΟΗ ΕΦΑΡΜΟΓΗΣ ---
 
