@@ -8,10 +8,10 @@ import time
 from google import genai
 from google.genai import types
 
-st.set_page_config(page_title="Pro Football Predictor + Cross-League Top Scores", layout="wide")
+st.set_page_config(page_title="Pro Football Predictor + Cross-League Tabs", layout="wide")
 
 st.title("⚽ Pro Football Predictor (Dixon-Coles + AI Tactical Analyst)")
-st.subheader("Σεζόν 2026/2027 | Στατιστική Ανάλυση 10ετίας, Exponential Decay & Cross-League Top 10 Scores")
+st.subheader("Σεζόν 2026/2027 | Cross-League Multi-Market Scanner & AI Analyst")
 
 SEASON_CODE = "2627"
 
@@ -209,7 +209,7 @@ def dixon_coles_adjustment(x, y, lambda_h, lambda_a, rho):
         return 1.0
 
 def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, a_adj=1.0, h2h_h_mult=1.0, h2h_a_mult=1.0):
-    """Υπολογισμός xG, Πιθανοτήτων, BTTS & Top 3 Σκορ"""
+    """Υπολογισμός xG, Πιθανοτήτων 1X2, Over/Under 2.5/3.5, BTTS & Top Σκορ"""
     default_stat = {'home_attack': 1, 'home_defense': 1, 'away_attack': 1, 'away_defense': 1}
     h_stat = stats.get(home_team, default_stat)
     a_stat = stats.get(away_team, default_stat)
@@ -234,8 +234,13 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
     prob_draw = np.sum(np.diag(score_matrix))
     prob_away = np.sum(np.triu(score_matrix, 1))
     
-    prob_over_1_5 = np.sum(score_matrix[np.add.outer(range(max_goals), range(max_goals)) > 1.5])
-    prob_over_2_5 = np.sum(score_matrix[np.add.outer(range(max_goals), range(max_goals)) > 2.5])
+    # Over / Under 2.5 & 3.5
+    goals_sum = np.add.outer(range(max_goals), range(max_goals))
+    prob_over_2_5 = np.sum(score_matrix[goals_sum > 2.5])
+    prob_under_2_5 = 1.0 - prob_over_2_5
+    
+    prob_over_3_5 = np.sum(score_matrix[goals_sum > 3.5])
+    prob_under_3_5 = 1.0 - prob_over_3_5
     
     prob_btts_yes = np.sum(score_matrix[1:, 1:])
     prob_btts_no = 1.0 - prob_btts_yes
@@ -259,8 +264,10 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_2': prob_away,
         'Prob_1X': prob_home + prob_draw,
         'Prob_X2': prob_away + prob_draw,
-        'Prob_Over_1.5': prob_over_1_5,
         'Prob_Over_2.5': prob_over_2_5,
+        'Prob_Under_2.5': prob_under_2_5,
+        'Prob_Over_3.5': prob_over_3_5,
+        'Prob_Under_3.5': prob_under_3_5,
         'Prob_GG': prob_btts_yes,
         'Prob_NG': prob_btts_no,
         'Top_Score': top_score_name,
@@ -323,7 +330,6 @@ def get_live_ai_analysis(home_team, away_team, date_str, stats_summary):
 st.sidebar.divider()
 st.sidebar.subheader("📅 Φίλτρο Ημερομηνιών")
 
-# Φόρτωση πρώτης λίγκας για αρχικές ημερομηνίες
 init_fixtures = load_fixtures_data(LEAGUES[selected_league_name]["code"])
 min_f_date = init_fixtures['Date'].min().date() if init_fixtures is not None and not init_fixtures.empty else pd.Timestamp.today().date()
 max_f_date = init_fixtures['Date'].max().date() if init_fixtures is not None and not init_fixtures.empty else pd.Timestamp.today().date()
@@ -340,8 +346,8 @@ elif isinstance(date_range, tuple) and len(date_range) == 1:
 else:
     start_date, end_date = min_f_date, max_f_date
 
-# --- ΣΑΡΩΣΗ ΟΛΩΝ ΤΩΝ ΠΡΩΤΑΘΛΗΜΑΤΩΝ ΓΙΑ ΤΑ TOP 10 ΣΚΟΡ ---
-all_league_scores = []
+# --- ΣΑΡΩΣΗ ΟΛΩΝ ΤΩΝ ΠΡΩΤΑΘΛΗΜΑΤΩΝ ---
+all_matches_list = []
 league_predictions = {}
 
 for l_name, l_info in LEAGUES.items():
@@ -352,7 +358,6 @@ for l_name, l_info in LEAGUES.items():
     
     if df_hist is not None and not df_hist.empty and df_fix is not None and not df_fix.empty:
         l_stats, l_avg_h, l_avg_a = calculate_dixon_coles_stats(df_hist, USE_WEIGHTS, DECAY_XI)
-        
         filt_fix = df_fix[(df_fix['Date'].dt.date >= start_date) & (df_fix['Date'].dt.date <= end_date)]
         
         preds_list = []
@@ -374,8 +379,10 @@ for l_name, l_info in LEAGUES.items():
                 ("2", pred['Prob_2']),
                 ("1X", pred['Prob_1X']),
                 ("X2", pred['Prob_X2']),
-                ("Over 1.5", pred['Prob_Over_1.5']),
                 ("Over 2.5", pred['Prob_Over_2.5']),
+                ("Under 2.5", pred['Prob_Under_2.5']),
+                ("Over 3.5", pred['Prob_Over_3.5']),
+                ("Under 3.5", pred['Prob_Under_3.5']),
                 ("GG (Goal/Goal)", pred['Prob_GG']),
                 ("NG (No Goal)", pred['Prob_NG'])
             ]
@@ -398,6 +405,10 @@ for l_name, l_info in LEAGUES.items():
                 "Αγώνας": f"{h_team} vs {a_team}",
                 "Προτεινόμενο Σημείο": best_pick,
                 "Πιθανότητα %": round(best_prob * 100, 1),
+                "Over 2.5 %": round(pred['Prob_Over_2.5'] * 100, 1),
+                "Under 2.5 %": round(pred['Prob_Under_2.5'] * 100, 1),
+                "Over 3.5 %": round(pred['Prob_Over_3.5'] * 100, 1),
+                "Under 3.5 %": round(pred['Prob_Under_3.5'] * 100, 1),
                 "GG %": round(pred['Prob_GG'] * 100, 1),
                 "Πιθανότερο Σκορ": pred['Top_Score'],
                 "Πιθανότητα Σκορ %": round(pred['Top_Score_Prob'] * 100, 1),
@@ -409,77 +420,128 @@ for l_name, l_info in LEAGUES.items():
             }
             
             preds_list.append(match_data)
-            all_league_scores.append(match_data)
+            all_matches_list.append(match_data)
             
         league_predictions[l_name] = pd.DataFrame(preds_list)
 
-# --- ΕΜΦΑΝΙΣΗ 10 ΠΙΟ ΠΙΘΑΝΩΝ ΣΚΟΡ ΑΠΟ ΟΛΑ ΤΑ ΠΡΩΤΑΘΛΗΜΑΤΑ ---
-st.info(f"📅 **Περίοδος Αγώνων: {start_date.strftime('%d/%m/%Y')} έως {end_date.strftime('%d/%m/%Y')}**")
+st.info(f"📅 **Περίοδος Αγώνων: {start_date.strftime('%d/%m/%Y')} έως {end_date.strftime('%d/%m/%Y')}** ({len(all_matches_list)} συνολικοί αγώνες)")
 
-if all_league_scores:
-    df_all_scores = pd.DataFrame(all_league_scores)
-    df_top_10_scores = df_all_scores.sort_values(by="Πιθανότητα Σκορ %", ascending=False).head(10)
-    
-    st.subheader("🎯 Top 10 Πιο Πιθανά Σκορ (Όλα τα Πρωτάθληματα)")
-    st.caption("Τα 10 ακριβή σκορ με τις υψηλότερες πιθανότητες επαλήθευσης από όλους τους αγώνες του επιλεγμένου διαστήματος.")
-    
-    display_cols_scores = [
-        "Πρωτάθλημα", "Ημερομηνία", "Ώρα", "Αγώνας", 
-        "Πιθανότερο Σκορ", "Πιθανότητα Σκορ %", "xG Γηπεδούχου", "xG Φιλοξενούμενου"
-    ]
-    st.dataframe(df_top_10_scores[display_cols_scores], use_container_width=True)
-    st.divider()
+# --- ΔΗΜΙΟΥΡΓΙΑ TABS ---
+tab1, tab2, tab3 = st.tabs([
+    "🏆 Top 10 Πιο Πιθανά Σκορ", 
+    "⚽ Top 10 Over / Under (2.5 & 3.5)", 
+    f"📊 Αναλυτική Προβολή ({selected_league_name})"
+])
 
-# --- ΑΝΑΛΥΤΙΚΗ ΠΡΟΒΟΛΗ ΕΠΙΛΕΓΜΕΝΟΥ ΠΡΩΤΑΘΛΗΜΑΤΟΣ ---
-st.subheader(f"📊 Αναλυτική Προβολή: {selected_league_name}")
-
-if selected_league_name in league_predictions and not league_predictions[selected_league_name].empty:
-    df_preds = league_predictions[selected_league_name].sort_values(by="Πιθανότητα %", ascending=False)
+# --- TAB 1: TOP 10 ΠΙΘΑΝΑ ΣΚΟΡ ---
+with tab1:
+    st.subheader("🎯 Top 10 Πιο Πιθανά Ακριβή Σκορ (Όλα τα Πρωτάθληματα)")
+    st.caption("Τα 10 ακριβή σκορ με τις υψηλότερες πιθανότητες επαλήθευσης από όλους τους αγώνες.")
     
-    st.subheader("🔥 Top Σημεία (Dixon-Coles + Time-Decay, GG/NG & Value Bets)")
-    top_picks = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD]
-    
-    if not top_picks.empty:
-        st.dataframe(top_picks, use_container_width=True)
+    if all_matches_list:
+        df_all = pd.DataFrame(all_matches_list)
+        df_top_10_scores = df_all.sort_values(by="Πιθανότητα Σκορ %", ascending=False).head(10)
+        
+        display_cols_scores = [
+            "Πρωτάθλημα", "Ημερομηνία", "Ώρα", "Αγώνας", 
+            "Πιθανότερο Σκορ", "Πιθανότητα Σκορ %", "xG Γηπεδούχου", "xG Φιλοξενούμενου"
+        ]
+        st.dataframe(df_top_10_scores[display_cols_scores], use_container_width=True)
     else:
-        st.warning(f"⚠️ Δεν βρέθηκαν επερχόμενα παιχνίδια με πιθανότητα >= {CONFIDENCE_THRESHOLD}% στο επιλεγμένο διάστημα.")
-        
-    st.divider()
-    
-    with st.expander("📊 Προβολή Όλων των Αναλυμένων Αγώνων Πρωταθλήματος"):
-        st.dataframe(df_preds, use_container_width=True)
+        st.warning("⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες στο συγκεκριμένο εύρος ημερομηνιών.")
 
-    # --- ΕΝΟΤΗΤΑ AI ANALYST ---
-    st.divider()
-    st.subheader("🤖 AI Tactical & Quantitative Analyst")
-    st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το Gemini 3.6 Flash ποσοτική και τακτική ανάλυση.")
+# --- TAB 2: TOP 10 OVER / UNDER ---
+with tab2:
+    st.subheader("⚽ Top 10 Πιο Πιθανά Over / Under (Όλα τα Πρωτάθληματα)")
+    st.caption("Τα 10 επικρατέστερα παιχνίδια για κάθε στοιχηματική αγορά γκολ.")
     
-    selected_match = st.selectbox(
-        "Επιλέξτε αγώνα για AI Ανάλυση:",
-        options=df_preds['Αγώνας'].tolist()
-    )
-    
-    if st.button("🚀 Εκτέλεση AI Ανάλυσης"):
-        match_row = df_preds[df_preds['Αγώνας'] == selected_match].iloc[0]
-        h_team, a_team = selected_match.split(" vs ")
-        m_date = match_row['Ημερομηνία']
+    if all_matches_list:
+        df_all = pd.DataFrame(all_matches_list)
         
-        summary = f"""
-        - Πρωτάθλημα: {match_row['Πρωτάθλημα']}
-        - Προτεινόμενο Σημείο Μοντέλου: {match_row['Προτεινόμενο Σημείο']} ({match_row['Πιθανότητα %']}%)
-        - xG: {match_row['xG Γηπεδούχου']} - {match_row['xG Φιλοξενούμενου']}
-        - Πιθανότητα GG (Goal/Goal): {match_row['GG %']}%
-        - Πιθανότερο Σκορ: {match_row['Πιθανότερο Σκορ']} ({match_row['Πιθανότητα Σκορ %']}%)
-        - Πιθανότερα Σκορ: {match_row['Πιθανότερα Σκορ']}
-        - Προϊστορία H2H (10ετίας): {match_row['Προϊστορία (H2H 10ετίας)']}
-        - Value Bet: {match_row['Value Bet']}
-        """
+        subtab_o25, subtab_u25, subtab_o35, subtab_u35 = st.tabs([
+            "🔥 Top 10 Over 2.5", 
+            "🛡️ Top 10 Under 2.5", 
+            "🚀 Top 10 Over 3.5", 
+            "🧱 Top 10 Under 3.5"
+        ])
         
-        with st.spinner("🔎 Πραγματοποιείται ανάλυση από το Gemini..."):
-            ai_report = get_live_ai_analysis(h_team, a_team, m_date, summary)
+        cols_ou = ["Πρωτάθλημα", "Ημερομηνία", "Ώρα", "Αγώνας", "xG Γηπεδούχου", "xG Φιλοξενούμενου"]
+        
+        with subtab_o25:
+            st.write("#### ⚽ Top 10 Over 2.5 Goals")
+            df_o25 = df_all.sort_values(by="Over 2.5 %", ascending=False).head(10)
+            st.dataframe(df_o25[cols_ou + ["Over 2.5 %"]], use_container_width=True)
             
-        st.markdown("### 🤖 AI Report & Verdict")
-        st.info(ai_report)
+        with subtab_u25:
+            st.write("#### 🛡️ Top 10 Under 2.5 Goals")
+            df_u25 = df_all.sort_values(by="Under 2.5 %", ascending=False).head(10)
+            st.dataframe(df_u25[cols_ou + ["Under 2.5 %"]], use_container_width=True)
+            
+        with subtab_o35:
+            st.write("#### 🚀 Top 10 Over 3.5 Goals")
+            df_o35 = df_all.sort_values(by="Over 3.5 %", ascending=False).head(10)
+            st.dataframe(df_o35[cols_ou + ["Over 3.5 %"]], use_container_width=True)
+            
+        with subtab_u35:
+            st.write("#### 🧱 Top 10 Under 3.5 Goals")
+            df_u35 = df_all.sort_values(by="Under 3.5 %", ascending=False).head(10)
+            st.dataframe(df_u35[cols_ou + ["Under 3.5 %"]], use_container_width=True)
+    else:
+        st.warning("⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες στο συγκεκριμένο εύρος ημερομηνιών.")
 
-else:
-    st.warning(f"⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες για το πρωτάθλημα {selected_league_name} στο συγκεκριμένο εύρος ημερομηνιών.")
+# --- TAB 3: ΑΝΑΛΥΤΙΚΗ ΠΡΟΒΟΛΗ ΠΡΩΤΑΘΛΗΜΑΤΟΣ & AI ---
+with tab3:
+    st.subheader(f"📊 Αναλυτική Προβολή: {selected_league_name}")
+    
+    if selected_league_name in league_predictions and not league_predictions[selected_league_name].empty:
+        df_preds = league_predictions[selected_league_name].sort_values(by="Πιθανότητα %", ascending=False)
+        
+        st.write("### 🔥 Top Σημεία Πρωταθλήματος (Dixon-Coles + Time-Decay & Value Bets)")
+        top_picks = df_preds[df_preds["Πιθανότητα %"] >= CONFIDENCE_THRESHOLD]
+        
+        if not top_picks.empty:
+            st.dataframe(top_picks, use_container_width=True)
+        else:
+            st.warning(f"⚠️ Δεν βρέθηκαν επερχόμενα παιχνίδια με πιθανότητα >= {CONFIDENCE_THRESHOLD}% στο επιλεγμένο διάστημα.")
+            
+        st.divider()
+        
+        with st.expander("📊 Προβολή Όλων των Αναλυμένων Αγώνων Πρωταθλήματος"):
+            st.dataframe(df_preds, use_container_width=True)
+
+        # --- ΕΝΟΤΗΤΑ AI ANALYST ---
+        st.divider()
+        st.subheader("🤖 AI Tactical & Quantitative Analyst")
+        st.caption("Επιλέξτε έναν αγώνα για να εκτελέσει το Gemini 3.6 Flash ποσοτική και τακτική ανάλυση.")
+        
+        selected_match = st.selectbox(
+            "Επιλέξτε αγώνα για AI Ανάλυση:",
+            options=df_preds['Αγώνας'].tolist()
+        )
+        
+        if st.button("🚀 Εκτέλεση AI Ανάλυσης"):
+            match_row = df_preds[df_preds['Αγώνας'] == selected_match].iloc[0]
+            h_team, a_team = selected_match.split(" vs ")
+            m_date = match_row['Ημερομηνία']
+            
+            summary = f"""
+            - Πρωτάθλημα: {match_row['Πρωτάθλημα']}
+            - Προτεινόμενο Σημείο Μοντέλου: {match_row['Προτεινόμενο Σημείο']} ({match_row['Πιθανότητα %']}%)
+            - xG: {match_row['xG Γηπεδούχου']} - {match_row['xG Φιλοξενούμενου']}
+            - Over 2.5 %: {match_row['Over 2.5 %']}% | Under 2.5 %: {match_row['Under 2.5 %']}%
+            - Over 3.5 %: {match_row['Over 3.5 %']}% | Under 3.5 %: {match_row['Under 3.5 %']}%
+            - Πιθανότητα GG (Goal/Goal): {match_row['GG %']}%
+            - Πιθανότερο Σκορ: {match_row['Πιθανότερο Σκορ']} ({match_row['Πιθανότητα Σκορ %']}%)
+            - Πιθανότερα Σκορ: {match_row['Πιθανότερα Σκορ']}
+            - Προϊστορία H2H (10ετίας): {match_row['Προϊστορία (H2H 10ετίας)']}
+            - Value Bet: {match_row['Value Bet']}
+            """
+            
+            with st.spinner("🔎 Πραγματοποιείται ανάλυση από το Gemini..."):
+                ai_report = get_live_ai_analysis(h_team, a_team, m_date, summary)
+                
+            st.markdown("### 🤖 AI Report & Verdict")
+            st.info(ai_report)
+
+    else:
+        st.warning(f"⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες για το πρωτάθλημα {selected_league_name} στο συγκεκριμένο εύρος ημερομηνιών.")
