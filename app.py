@@ -483,9 +483,6 @@ if selected_league_name in league_predictions and not league_predictions[selecte
 
 else:
     st.warning(f"⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες για το πρωτάθλημα {selected_league_name} στο συγκεκριμένο εύρος ημερομηνιών.")
-```[cite: 3]
-
----
 
 ### 🔥 Τι άλλαξε & Πώς Λειτουργεί:
 
