@@ -209,7 +209,7 @@ def dixon_coles_adjustment(x, y, lambda_h, lambda_a, rho):
         return 1.0
 
 def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, a_adj=1.0, h2h_h_mult=1.0, h2h_a_mult=1.0):
-    """Υπολογισμός xG, Πιθανοτήτων 1X2, Over/Under 2.5/3.5, BTTS & Top Σκορ"""
+    """Υπολογισμός xG, Πιθανοτήτων 1X2, Over/Under 1.5/2.5/3.5, BTTS & Top Σκορ"""
     default_stat = {'home_attack': 1, 'home_defense': 1, 'away_attack': 1, 'away_defense': 1}
     h_stat = stats.get(home_team, default_stat)
     a_stat = stats.get(away_team, default_stat)
@@ -234,8 +234,12 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
     prob_draw = np.sum(np.diag(score_matrix))
     prob_away = np.sum(np.triu(score_matrix, 1))
     
-    # Over / Under 2.5 & 3.5
+    # Over / Under 1.5, 2.5 & 3.5
     goals_sum = np.add.outer(range(max_goals), range(max_goals))
+    
+    prob_over_1_5 = np.sum(score_matrix[goals_sum > 1.5])
+    prob_under_1_5 = 1.0 - prob_over_1_5
+    
     prob_over_2_5 = np.sum(score_matrix[goals_sum > 2.5])
     prob_under_2_5 = 1.0 - prob_over_2_5
     
@@ -264,6 +268,8 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_2': prob_away,
         'Prob_1X': prob_home + prob_draw,
         'Prob_X2': prob_away + prob_draw,
+        'Prob_Over_1.5': prob_over_1_5,
+        'Prob_Under_1.5': prob_under_1_5,
         'Prob_Over_2.5': prob_over_2_5,
         'Prob_Under_2.5': prob_under_2_5,
         'Prob_Over_3.5': prob_over_3_5,
@@ -379,6 +385,8 @@ for l_name, l_info in LEAGUES.items():
                 ("2", pred['Prob_2']),
                 ("1X", pred['Prob_1X']),
                 ("X2", pred['Prob_X2']),
+                ("Over 1.5", pred['Prob_Over_1.5']),
+                ("Under 1.5", pred['Prob_Under_1.5']),
                 ("Over 2.5", pred['Prob_Over_2.5']),
                 ("Under 2.5", pred['Prob_Under_2.5']),
                 ("Over 3.5", pred['Prob_Over_3.5']),
@@ -405,6 +413,8 @@ for l_name, l_info in LEAGUES.items():
                 "Αγώνας": f"{h_team} vs {a_team}",
                 "Προτεινόμενο Σημείο": best_pick,
                 "Πιθανότητα %": round(best_prob * 100, 1),
+                "Over 1.5 %": round(pred['Prob_Over_1.5'] * 100, 1),
+                "Under 1.5 %": round(pred['Prob_Under_1.5'] * 100, 1),
                 "Over 2.5 %": round(pred['Prob_Over_2.5'] * 100, 1),
                 "Under 2.5 %": round(pred['Prob_Under_2.5'] * 100, 1),
                 "Over 3.5 %": round(pred['Prob_Over_3.5'] * 100, 1),
@@ -429,7 +439,7 @@ st.info(f"📅 **Περίοδος Αγώνων: {start_date.strftime('%d/%m/%Y')
 # --- ΔΗΜΙΟΥΡΓΙΑ TABS ---
 tab1, tab2, tab3 = st.tabs([
     "🏆 Top 10 Πιο Πιθανά Σκορ", 
-    "⚽ Top 10 Over / Under (2.5 & 3.5)", 
+    "⚽ Top 10 Over / Under (1.5, 2.5 & 3.5)", 
     f"📊 Αναλυτική Προβολή ({selected_league_name})"
 ])
 
@@ -458,7 +468,9 @@ with tab2:
     if all_matches_list:
         df_all = pd.DataFrame(all_matches_list)
         
-        subtab_o25, subtab_u25, subtab_o35, subtab_u35 = st.tabs([
+        subtab_o15, subtab_u15, subtab_o25, subtab_u25, subtab_o35, subtab_u35 = st.tabs([
+            "⚡ Top 10 Over 1.5", 
+            "🔒 Top 10 Under 1.5", 
             "🔥 Top 10 Over 2.5", 
             "🛡️ Top 10 Under 2.5", 
             "🚀 Top 10 Over 3.5", 
@@ -467,6 +479,16 @@ with tab2:
         
         cols_ou = ["Πρωτάθλημα", "Ημερομηνία", "Ώρα", "Αγώνας", "xG Γηπεδούχου", "xG Φιλοξενούμενου"]
         
+        with subtab_o15:
+            st.write("#### ⚡ Top 10 Over 1.5 Goals")
+            df_o15 = df_all.sort_values(by="Over 1.5 %", ascending=False).head(10)
+            st.dataframe(df_o15[cols_ou + ["Over 1.5 %"]], use_container_width=True)
+            
+        with subtab_u15:
+            st.write("#### 🔒 Top 10 Under 1.5 Goals")
+            df_u15 = df_all.sort_values(by="Under 1.5 %", ascending=False).head(10)
+            st.dataframe(df_u15[cols_ou + ["Under 1.5 %"]], use_container_width=True)
+            
         with subtab_o25:
             st.write("#### ⚽ Top 10 Over 2.5 Goals")
             df_o25 = df_all.sort_values(by="Over 2.5 %", ascending=False).head(10)
@@ -528,6 +550,7 @@ with tab3:
             - Πρωτάθλημα: {match_row['Πρωτάθλημα']}
             - Προτεινόμενο Σημείο Μοντέλου: {match_row['Προτεινόμενο Σημείο']} ({match_row['Πιθανότητα %']}%)
             - xG: {match_row['xG Γηπεδούχου']} - {match_row['xG Φιλοξενούμενου']}
+            - Over 1.5 %: {match_row['Over 1.5 %']}% | Under 1.5 %: {match_row['Under 1.5 %']}%
             - Over 2.5 %: {match_row['Over 2.5 %']}% | Under 2.5 %: {match_row['Under 2.5 %']}%
             - Over 3.5 %: {match_row['Over 3.5 %']}% | Under 3.5 %: {match_row['Under 3.5 %']}%
             - Πιθανότητα GG (Goal/Goal): {match_row['GG %']}%
