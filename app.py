@@ -494,7 +494,8 @@ with tab1:
                     index=[f"Home {i}" for i in range(7)],
                     columns=[f"Away {j}" for j in range(7)]
                 )
-                st.dataframe(df_matrix.style.background_gradient(cmap="YlOrRd"), use_container_width=True)
+                # Χρησιμοποιούμε απλό dataframe χωρίς εξάρτηση από matplotlib
+                st.dataframe(df_matrix, use_container_width=True)
                 
             with col_m2:
                 st.write("#### 🎯 Στατιστικοί Δείκτες Σκορ")
