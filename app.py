@@ -8,10 +8,10 @@ import time
 from google import genai
 from google.genai import types
 
-st.set_page_config(page_title="Pro Football Predictor + Cross-League Tabs", layout="wide")
+st.set_page_config(page_title="Pro Football Predictor + Deep Score Matrix Analyst", layout="wide")
 
 st.title("⚽ Pro Football Predictor (Dixon-Coles + AI Tactical Analyst)")
-st.subheader("Σεζόν 2026/2027 | Cross-League Multi-Market Scanner & AI Analyst")
+st.subheader("Σεζόν 2026/2027 | Cross-League Multi-Market Scanner & Deep Score Matrix Analysis")
 
 SEASON_CODE = "2627"
 
@@ -209,7 +209,7 @@ def dixon_coles_adjustment(x, y, lambda_h, lambda_a, rho):
         return 1.0
 
 def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, a_adj=1.0, h2h_h_mult=1.0, h2h_a_mult=1.0):
-    """Υπολογισμός xG, Πιθανοτήτων 1X2, Over/Under 1.5/2.5/3.5, BTTS & Top Σκορ"""
+    """Υπολογισμός xG, Πιθανοτήτων 1X2, Over/Under 1.5/2.5/3.5, BTTS, Full Matrix & Top 5 Σκορ"""
     default_stat = {'home_attack': 1, 'home_defense': 1, 'away_attack': 1, 'away_defense': 1}
     h_stat = stats.get(home_team, default_stat)
     a_stat = stats.get(away_team, default_stat)
@@ -258,7 +258,11 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
     top_score_name = score_tuples[0][0]
     top_score_prob = score_tuples[0][1]
     
-    top_3_scores = [f"{s[0]} ({round(s[1]*100, 1)}%)" for s in score_tuples[:3]]
+    # Top 5 Σκορ & Δείκτες Σιγουριάς Matrix
+    top_5_scores = score_tuples[:5]
+    top_5_str_list = [f"{s[0]} ({round(s[1]*100, 1)}%)" for s in top_5_scores]
+    top_5_cumulative = sum(s[1] for s in top_5_scores)
+    conf_gap = top_5_scores[0][1] - top_5_scores[1][1]
     
     return {
         'xG_Home': round(lambda_home, 2),
@@ -278,7 +282,11 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_NG': prob_btts_no,
         'Top_Score': top_score_name,
         'Top_Score_Prob': top_score_prob,
-        'Top_Scores': ", ".join(top_3_scores)
+        'Top_3_Scores': ", ".join(top_5_str_list[:3]),
+        'Top_5_Scores': ", ".join(top_5_str_list),
+        'Top_5_Cumulative_%': round(top_5_cumulative * 100, 1),
+        'Score_Confidence_Gap_%': round(conf_gap * 100, 1),
+        'Score_Matrix': score_matrix
     }
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -355,6 +363,7 @@ else:
 # --- ΣΑΡΩΣΗ ΟΛΩΝ ΤΩΝ ΠΡΩΤΑΘΛΗΜΑΤΩΝ ---
 all_matches_list = []
 league_predictions = {}
+raw_predictions_dict = {}
 
 for l_name, l_info in LEAGUES.items():
     l_code = l_info["code"]
@@ -372,6 +381,7 @@ for l_name, l_info in LEAGUES.items():
             a_team = row['AwayTeam']
             m_date = row['Date'].strftime('%d/%m/%Y')
             m_time = row['Time'] if 'Time' in row and pd.notna(row['Time']) else ""
+            match_name = f"{h_team} vs {a_team}"
             
             if USE_H2H:
                 h2h_h_mult, h2h_a_mult, h2h_str = calculate_h2h_adjustment(df_h2h, h_team, a_team, max_matches=20)
@@ -379,6 +389,7 @@ for l_name, l_info in LEAGUES.items():
                 h2h_h_mult, h2h_a_mult, h2h_str = 1.0, 1.0, "Off"
                 
             pred = predict_match_dc(h_team, a_team, l_stats, l_avg_h, l_avg_a, RHO_DIXON, 1.0, 1.0, h2h_h_mult, h2h_a_mult)
+            raw_predictions_dict[match_name] = pred
             
             outcomes = [
                 ("1", pred['Prob_1']),
@@ -410,7 +421,7 @@ for l_name, l_info in LEAGUES.items():
                 "Πρωτάθλημα": l_name,
                 "Ημερομηνία": m_date,
                 "Ώρα": m_time,
-                "Αγώνας": f"{h_team} vs {a_team}",
+                "Αγώνας": match_name,
                 "Προτεινόμενο Σημείο": best_pick,
                 "Πιθανότητα %": round(best_prob * 100, 1),
                 "Over 1.5 %": round(pred['Prob_Over_1.5'] * 100, 1),
@@ -422,7 +433,9 @@ for l_name, l_info in LEAGUES.items():
                 "GG %": round(pred['Prob_GG'] * 100, 1),
                 "Πιθανότερο Σκορ": pred['Top_Score'],
                 "Πιθανότητα Σκορ %": round(pred['Top_Score_Prob'] * 100, 1),
-                "Πιθανότερα Σκορ": pred['Top_Scores'],
+                "Top 5 Σκορ": pred['Top_5_Scores'],
+                "Συγκέντρωση Top 5 %": pred['Top_5_Cumulative_%'],
+                "Περιθώριο Σιγουριάς Σκορ %": pred['Score_Confidence_Gap_%'],
                 "Value Bet": value_flag,
                 "Προϊστορία (H2H 10ετίας)": h2h_str,
                 "xG Γηπεδούχου": pred['xG_Home'],
@@ -438,12 +451,12 @@ st.info(f"📅 **Περίοδος Αγώνων: {start_date.strftime('%d/%m/%Y')
 
 # --- ΔΗΜΙΟΥΡΓΙΑ TABS ---
 tab1, tab2, tab3 = st.tabs([
-    "🏆 Top 10 Πιο Πιθανά Σκορ", 
+    "🏆 Top 10 Πιο Πιθανά Σκορ & Deep Matrix", 
     "⚽ Top 10 Over / Under (1.5, 2.5 & 3.5)", 
     f"📊 Αναλυτική Προβολή ({selected_league_name})"
 ])
 
-# --- TAB 1: TOP 10 ΠΙΘΑΝΑ ΣΚΟΡ ---
+# --- TAB 1: TOP 10 ΠΙΘΑΝΑ ΣΚΟΡ & DEEP MATRIX ANALYST ---
 with tab1:
     st.subheader("🎯 Top 10 Πιο Πιθανά Ακριβή Σκορ (Όλα τα Πρωτάθληματα)")
     st.caption("Τα 10 ακριβή σκορ με τις υψηλότερες πιθανότητες επαλήθευσης από όλους τους αγώνες.")
@@ -454,9 +467,49 @@ with tab1:
         
         display_cols_scores = [
             "Πρωτάθλημα", "Ημερομηνία", "Ώρα", "Αγώνας", 
-            "Πιθανότερο Σκορ", "Πιθανότητα Σκορ %", "xG Γηπεδούχου", "xG Φιλοξενούμενου"
+            "Πιθανότερο Σκορ", "Πιθανότητα Σκορ %", "Top 5 Σκορ", 
+            "Συγκέντρωση Top 5 %", "xG Γηπεδούχου", "xG Φιλοξενούμενου"
         ]
         st.dataframe(df_top_10_scores[display_cols_scores], use_container_width=True)
+        
+        st.divider()
+        st.subheader("🔎 Βαθιά Ανάλυση Matrix Σκορ Αγώνα (Heatmap 7x7)")
+        st.caption("Επιλέξτε έναν αγώνα για να εμφανιστεί ο πλήρης πίνακας πιθανοτήτων για όλα τα σκορ (0-0 έως 6-6).")
+        
+        selected_matrix_match = st.selectbox(
+            "Επιλέξτε αγώνα για ανάλυση Matrix Σκορ:",
+            options=df_all['Αγώνας'].tolist()
+        )
+        
+        if selected_matrix_match in raw_predictions_dict:
+            p_data = raw_predictions_dict[selected_matrix_match]
+            matrix = p_data['Score_Matrix']
+            
+            col_m1, col_m2 = st.columns([3, 2])
+            
+            with col_m1:
+                st.write(f"#### 📊 Πίνακας Πιθανοτήτων 7x7: {selected_matrix_match}")
+                df_matrix = pd.DataFrame(
+                    np.round(matrix * 100, 2),
+                    index=[f"Home {i}" for i in range(7)],
+                    columns=[f"Away {j}" for j in range(7)]
+                )
+                st.dataframe(df_matrix.style.background_gradient(cmap="YlOrRd"), use_container_width=True)
+                
+            with col_m2:
+                st.write("#### 🎯 Στατιστικοί Δείκτες Σκορ")
+                st.info(f"""
+                * **1ο Πιθανότερο Σκορ**: `{p_data['Top_Score']}` ({round(p_data['Top_Score_Prob']*100, 1)}%)
+                * **Top 5 Σκορ**: {p_data['Top_5_Scores']}
+                * **Συγκέντρωση Πιθανότητας Top 5**: `{p_data['Top_5_Cumulative_%']}%`
+                * **Περιθώριο Σιγουριάς (Gap 1ου-2ου)**: `{p_data['Score_Confidence_Gap_%']}%`
+                * **xG Αγώνα**: {p_data['xG_Home']} - {p_data['xG_Away']}
+                """)
+                
+                if p_data['Score_Confidence_Gap_%'] >= 2.5:
+                    st.success("✅ **Καθαρό Προβάδισμα**: Το 1ο σκορ έχει σημαντική απόσταση ασφαλείας από τα υπόλοιπα!")
+                else:
+                    st.warning("⚠️ **Ισορροπημένο Matrix**: Τα πρώτα 3 σκορ έχουν πολύ κοντινές πιθανότητες.")
     else:
         st.warning("⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες στο συγκεκριμένο εύρος ημερομηνιών.")
 
@@ -555,7 +608,9 @@ with tab3:
             - Over 3.5 %: {match_row['Over 3.5 %']}% | Under 3.5 %: {match_row['Under 3.5 %']}%
             - Πιθανότητα GG (Goal/Goal): {match_row['GG %']}%
             - Πιθανότερο Σκορ: {match_row['Πιθανότερο Σκορ']} ({match_row['Πιθανότητα Σκορ %']}%)
-            - Πιθανότερα Σκορ: {match_row['Πιθανότερα Σκορ']}
+            - Top 5 Σκορ: {match_row['Top 5 Σκορ']}
+            - Συγκέντρωση Top 5 %: {match_row['Συγκέντρωση Top 5 %']}%
+            - Περιθώριο Σιγουριάς 1ου-2ου Σκορ: {match_row['Περιθώριο Σιγουριάς Σκορ %']}%
             - Προϊστορία H2H (10ετίας): {match_row['Προϊστορία (H2H 10ετίας)']}
             - Value Bet: {match_row['Value Bet']}
             """
