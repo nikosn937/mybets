@@ -451,26 +451,26 @@ st.info(f"📅 **Περίοδος Αγώνων: {start_date.strftime('%d/%m/%Y')
 
 # --- ΔΗΜΙΟΥΡΓΙΑ TABS ---
 tab1, tab2, tab3 = st.tabs([
-    "🏆 Top 10 Πιο Πιθανά Σκορ & Deep Matrix", 
-    "⚽ Top 10 Over / Under (1.5, 2.5 & 3.5)", 
+    "🏆 Top 20 Πιο Πιθανά Σκορ & Deep Matrix", 
+    "⚽ Top 20 Over / Under (1.5, 2.5 & 3.5)", 
     f"📊 Αναλυτική Προβολή ({selected_league_name})"
 ])
 
-# --- TAB 1: TOP 10 ΠΙΘΑΝΑ ΣΚΟΡ & DEEP MATRIX ANALYST ---
+# --- TAB 1: TOP 20 ΠΙΘΑΝΑ ΣΚΟΡ & DEEP MATRIX ANALYST ---
 with tab1:
-    st.subheader("🎯 Top 10 Πιο Πιθανά Ακριβή Σκορ (Όλα τα Πρωτάθληματα)")
-    st.caption("Τα 10 ακριβή σκορ με τις υψηλότερες πιθανότητες επαλήθευσης από όλους τους αγώνες.")
+    st.subheader("🎯 Top 20 Πιο Πιθανά Ακριβή Σκορ (Όλα τα Πρωτάθληματα)")
+    st.caption("Τα 20 ακριβή σκορ με τις υψηλότερες πιθανότητες επαλήθευσης από όλους τους αγώνες.")
     
     if all_matches_list:
         df_all = pd.DataFrame(all_matches_list)
-        df_top_10_scores = df_all.sort_values(by="Πιθανότητα Σκορ %", ascending=False).head(10)
+        df_top_20_scores = df_all.sort_values(by="Πιθανότητα Σκορ %", ascending=False).head(20)
         
         display_cols_scores = [
             "Πρωτάθλημα", "Ημερομηνία", "Ώρα", "Αγώνας", 
             "Πιθανότερο Σκορ", "Πιθανότητα Σκορ %", "Top 5 Σκορ", 
             "Συγκέντρωση Top 5 %", "xG Γηπεδούχου", "xG Φιλοξενούμενου"
         ]
-        st.dataframe(df_top_10_scores[display_cols_scores], use_container_width=True)
+        st.dataframe(df_top_20_scores[display_cols_scores], use_container_width=True)
         
         st.divider()
         st.subheader("🔎 Βαθιά Ανάλυση Matrix Σκορ Αγώνα (Heatmap 7x7)")
@@ -494,7 +494,6 @@ with tab1:
                     index=[f"Home {i}" for i in range(7)],
                     columns=[f"Away {j}" for j in range(7)]
                 )
-                # Χρησιμοποιούμε απλό dataframe χωρίς εξάρτηση από matplotlib
                 st.dataframe(df_matrix, use_container_width=True)
                 
             with col_m2:
@@ -514,53 +513,53 @@ with tab1:
     else:
         st.warning("⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες στο συγκεκριμένο εύρος ημερομηνιών.")
 
-# --- TAB 2: TOP 10 OVER / UNDER ---
+# --- TAB 2: TOP 20 OVER / UNDER ---
 with tab2:
-    st.subheader("⚽ Top 10 Πιο Πιθανά Over / Under (Όλα τα Πρωτάθληματα)")
-    st.caption("Τα 10 επικρατέστερα παιχνίδια για κάθε στοιχηματική αγορά γκολ.")
+    st.subheader("⚽ Top 20 Πιο Πιθανά Over / Under (Όλα τα Πρωτάθληματα)")
+    st.caption("Τα 20 επικρατέστερα παιχνίδια για κάθε στοιχηματική αγορά γκολ.")
     
     if all_matches_list:
         df_all = pd.DataFrame(all_matches_list)
         
         subtab_o15, subtab_u15, subtab_o25, subtab_u25, subtab_o35, subtab_u35 = st.tabs([
-            "⚡ Top 10 Over 1.5", 
-            "🔒 Top 10 Under 1.5", 
-            "🔥 Top 10 Over 2.5", 
-            "🛡️ Top 10 Under 2.5", 
-            "🚀 Top 10 Over 3.5", 
-            "🧱 Top 10 Under 3.5"
+            "⚡ Top 20 Over 1.5", 
+            "🔒 Top 20 Under 1.5", 
+            "🔥 Top 20 Over 2.5", 
+            "🛡️ Top 20 Under 2.5", 
+            "🚀 Top 20 Over 3.5", 
+            "🧱 Top 20 Under 3.5"
         ])
         
         cols_ou = ["Πρωτάθλημα", "Ημερομηνία", "Ώρα", "Αγώνας", "xG Γηπεδούχου", "xG Φιλοξενούμενου"]
         
         with subtab_o15:
-            st.write("#### ⚡ Top 10 Over 1.5 Goals")
-            df_o15 = df_all.sort_values(by="Over 1.5 %", ascending=False).head(10)
+            st.write("#### ⚡ Top 20 Over 1.5 Goals")
+            df_o15 = df_all.sort_values(by="Over 1.5 %", ascending=False).head(20)
             st.dataframe(df_o15[cols_ou + ["Over 1.5 %"]], use_container_width=True)
             
         with subtab_u15:
-            st.write("#### 🔒 Top 10 Under 1.5 Goals")
-            df_u15 = df_all.sort_values(by="Under 1.5 %", ascending=False).head(10)
+            st.write("#### 🔒 Top 20 Under 1.5 Goals")
+            df_u15 = df_all.sort_values(by="Under 1.5 %", ascending=False).head(20)
             st.dataframe(df_u15[cols_ou + ["Under 1.5 %"]], use_container_width=True)
             
         with subtab_o25:
-            st.write("#### ⚽ Top 10 Over 2.5 Goals")
-            df_o25 = df_all.sort_values(by="Over 2.5 %", ascending=False).head(10)
+            st.write("#### ⚽ Top 20 Over 2.5 Goals")
+            df_o25 = df_all.sort_values(by="Over 2.5 %", ascending=False).head(20)
             st.dataframe(df_o25[cols_ou + ["Over 2.5 %"]], use_container_width=True)
             
         with subtab_u25:
-            st.write("#### 🛡️ Top 10 Under 2.5 Goals")
-            df_u25 = df_all.sort_values(by="Under 2.5 %", ascending=False).head(10)
+            st.write("#### 🛡️ Top 20 Under 2.5 Goals")
+            df_u25 = df_all.sort_values(by="Under 2.5 %", ascending=False).head(20)
             st.dataframe(df_u25[cols_ou + ["Under 2.5 %"]], use_container_width=True)
             
         with subtab_o35:
-            st.write("#### 🚀 Top 10 Over 3.5 Goals")
-            df_o35 = df_all.sort_values(by="Over 3.5 %", ascending=False).head(10)
+            st.write("#### 🚀 Top 20 Over 3.5 Goals")
+            df_o35 = df_all.sort_values(by="Over 3.5 %", ascending=False).head(20)
             st.dataframe(df_o35[cols_ou + ["Over 3.5 %"]], use_container_width=True)
             
         with subtab_u35:
-            st.write("#### 🧱 Top 10 Under 3.5 Goals")
-            df_u35 = df_all.sort_values(by="Under 3.5 %", ascending=False).head(10)
+            st.write("#### 🧱 Top 20 Under 3.5 Goals")
+            df_u35 = df_all.sort_values(by="Under 3.5 %", ascending=False).head(20)
             st.dataframe(df_u35[cols_ou + ["Under 3.5 %"]], use_container_width=True)
     else:
         st.warning("⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες στο συγκεκριμένο εύρος ημερομηνιών.")
