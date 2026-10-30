@@ -8,10 +8,10 @@ import time
 from google import genai
 from google.genai import types
 
-st.set_page_config(page_title="Pro Football Predictor + Combo Market Generator", layout="wide")
+st.set_page_config(page_title="Pro Football Predictor + Full Combo Markets", layout="wide")
 
-st.title("⚽ Pro Football Predictor (Dixon-Coles + Combo Market Generator)")
-st.subheader("Σεζόν 2026/2027 | Cross-League Multi-Market Scanner, Combo Betting & AI Analyst")
+st.title("⚽ Pro Football Predictor (Dixon-Coles + Full Combo Markets)")
+st.subheader("Σεζόν 2026/2027 | Cross-League Multi-Market Scanner, Full Combos & AI Analyst")
 
 SEASON_CODE = "2627"
 
@@ -200,13 +200,13 @@ def dixon_coles_adjustment(x, y, lambda_h, lambda_a, rho):
         return 1.0
 
 def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, a_adj=1.0, h2h_h_mult=1.0, h2h_a_mult=1.0):
-    """Υπολογισμός xG, Πιθανοτήτων 1X2, Over/Under, Combo Markets & Matrix"""
+    """Υπολογισμός xG, Πιθανοτήτων 1X2, Over/Under, Full Combos & Matrix"""
     default_stat = {'home_attack': 1, 'home_defense': 1, 'away_attack': 1, 'away_defense': 1}
     h_stat = stats.get(home_team, default_stat)
     a_stat = stats.get(away_team, default_stat)
     
     lambda_home = h_stat['home_attack'] * a_stat['away_defense'] * avg_h * h_adj * h2h_h_mult
-    lambda_away = a_stat['attack'] * h_stat['home_defense'] * avg_a * a_adj * h2h_a_mult if 'attack' in a_stat else a_stat['away_attack'] * h_stat['home_defense'] * avg_a * a_adj * h2h_a_mult
+    lambda_away = a_stat['away_attack'] * h_stat['home_defense'] * avg_a * a_adj * h2h_a_mult
     
     max_goals = 7
     score_matrix = np.zeros((max_goals, max_goals))
@@ -227,33 +227,47 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
     
     goals_sum = np.add.outer(range(max_goals), range(max_goals))
     
+    # Over / Under
     prob_over_1_5 = np.sum(score_matrix[goals_sum > 1.5])
     prob_under_1_5 = 1.0 - prob_over_1_5
-    
     prob_over_2_5 = np.sum(score_matrix[goals_sum > 2.5])
     prob_under_2_5 = 1.0 - prob_over_2_5
-    
     prob_over_3_5 = np.sum(score_matrix[goals_sum > 3.5])
     prob_under_3_5 = 1.0 - prob_over_3_5
     
     prob_btts_yes = np.sum(score_matrix[1:, 1:])
     prob_btts_no = 1.0 - prob_btts_yes
     
-    # Combo Market Generator Masks
+    # Masks for Combos
     tril_mask = np.tril(np.ones((max_goals, max_goals)), -1)
     triu_mask = np.triu(np.ones((max_goals, max_goals)), 1)
-    
-    prob_1_over_25 = np.sum(score_matrix[(goals_sum > 2.5) & (tril_mask == 1)])
-    prob_2_over_25 = np.sum(score_matrix[(goals_sum > 2.5) & (triu_mask == 1)])
-    
-    prob_1_under_35 = np.sum(score_matrix[(goals_sum <= 3.5) & (tril_mask == 1)])
-    prob_2_under_35 = np.sum(score_matrix[(goals_sum <= 3.5) & (triu_mask == 1)])
-    
     not_triu_mask = 1.0 - np.triu(np.ones((max_goals, max_goals)), 1)
     not_tril_mask = 1.0 - np.tril(np.ones((max_goals, max_goals)), -1)
     
-    prob_1x_over_15 = np.sum(score_matrix[(goals_sum > 1.5) & (not_triu_mask == 1)])
-    prob_x2_over_15 = np.sum(score_matrix[(goals_sum > 1.5) & (not_tril_mask == 1)])
+    # --- FULL COMBO CALCULATIONS ---
+    # 1.5 Combos
+    p_1_ov15 = np.sum(score_matrix[(goals_sum > 1.5) & (tril_mask == 1)])
+    p_2_ov15 = np.sum(score_matrix[(goals_sum > 1.5) & (triu_mask == 1)])
+    p_1_un15 = np.sum(score_matrix[(goals_sum <= 1.5) & (tril_mask == 1)])
+    p_2_un15 = np.sum(score_matrix[(goals_sum <= 1.5) & (triu_mask == 1)])
+    p_1x_ov15 = np.sum(score_matrix[(goals_sum > 1.5) & (not_triu_mask == 1)])
+    p_x2_ov15 = np.sum(score_matrix[(goals_sum > 1.5) & (not_tril_mask == 1)])
+
+    # 2.5 Combos
+    p_1_ov25 = np.sum(score_matrix[(goals_sum > 2.5) & (tril_mask == 1)])
+    p_2_ov25 = np.sum(score_matrix[(goals_sum > 2.5) & (triu_mask == 1)])
+    p_1_un25 = np.sum(score_matrix[(goals_sum <= 2.5) & (tril_mask == 1)])
+    p_2_un25 = np.sum(score_matrix[(goals_sum <= 2.5) & (triu_mask == 1)])
+    p_1x_ov25 = np.sum(score_matrix[(goals_sum > 2.5) & (not_triu_mask == 1)])
+    p_x2_ov25 = np.sum(score_matrix[(goals_sum > 2.5) & (not_tril_mask == 1)])
+
+    # 3.5 Combos
+    p_1_ov35 = np.sum(score_matrix[(goals_sum > 3.5) & (tril_mask == 1)])
+    p_2_ov35 = np.sum(score_matrix[(goals_sum > 3.5) & (triu_mask == 1)])
+    p_1_un35 = np.sum(score_matrix[(goals_sum <= 3.5) & (tril_mask == 1)])
+    p_2_un35 = np.sum(score_matrix[(goals_sum <= 3.5) & (triu_mask == 1)])
+    p_1x_ov35 = np.sum(score_matrix[(goals_sum > 3.5) & (not_triu_mask == 1)])
+    p_x2_ov35 = np.sum(score_matrix[(goals_sum > 3.5) & (not_tril_mask == 1)])
 
     score_tuples = []
     for x in range(max_goals):
@@ -285,12 +299,13 @@ def predict_match_dc(home_team, away_team, stats, avg_h, avg_a, rho, h_adj=1.0, 
         'Prob_Under_3.5': prob_under_3_5,
         'Prob_GG': prob_btts_yes,
         'Prob_NG': prob_btts_no,
-        'Combo_1_Over_2.5': prob_1_over_25,
-        'Combo_2_Over_2.5': prob_2_over_25,
-        'Combo_1_Under_3.5': prob_1_under_35,
-        'Combo_2_Under_3.5': prob_2_under_35,
-        'Combo_1X_Over_1.5': prob_1x_over_15,
-        'Combo_X2_Over_1.5': prob_x2_over_15,
+        # Combos 1.5
+        'Combo_1_Ov15': p_1_ov15, 'Combo_2_Ov15': p_2_ov15, 'Combo_1_Un15': p_1_un15, 'Combo_2_Un15': p_2_un15, 'Combo_1X_Ov15': p_1x_ov15, 'Combo_X2_Ov15': p_x2_ov15,
+        # Combos 2.5
+        'Combo_1_Ov25': p_1_ov25, 'Combo_2_Ov25': p_2_ov25, 'Combo_1_Un25': p_1_un25, 'Combo_2_Un25': p_2_un25, 'Combo_1X_Ov25': p_1x_ov25, 'Combo_X2_Ov25': p_x2_ov25,
+        # Combos 3.5
+        'Combo_1_Ov35': p_1_ov35, 'Combo_2_Ov35': p_2_ov35, 'Combo_1_Un35': p_1_un35, 'Combo_2_Un35': p_2_un35, 'Combo_1X_Ov35': p_1x_ov35, 'Combo_X2_Ov35': p_x2_ov35,
+        
         'Top_Score': top_score_name,
         'Top_Score_Prob': top_score_prob,
         'Top_5_Scores': ", ".join(top_5_str_list),
@@ -436,12 +451,22 @@ for l_name, l_info in LEAGUES.items():
                 "Over 3.5 %": round(pred['Prob_Over_3.5'] * 100, 1),
                 "Under 3.5 %": round(pred['Prob_Under_3.5'] * 100, 1),
                 "GG %": round(pred['Prob_GG'] * 100, 1),
-                "1 & Over 2.5 %": round(pred['Combo_1_Over_2.5'] * 100, 1),
-                "2 & Over 2.5 %": round(pred['Combo_2_Over_2.5'] * 100, 1),
-                "1 & Under 3.5 %": round(pred['Combo_1_Under_3.5'] * 100, 1),
-                "2 & Under 3.5 %": round(pred['Combo_2_Under_3.5'] * 100, 1),
-                "1X & Over 1.5 %": round(pred['Combo_1X_Over_1.5'] * 100, 1),
-                "X2 & Over 1.5 %": round(pred['Combo_X2_Over_1.5'] * 100, 1),
+                
+                # Combos 1.5
+                "1 & Over 1.5 %": round(pred['Combo_1_Ov15'] * 100, 1), "2 & Over 1.5 %": round(pred['Combo_2_Ov15'] * 100, 1),
+                "1 & Under 1.5 %": round(pred['Combo_1_Un15'] * 100, 1), "2 & Under 1.5 %": round(pred['Combo_2_Un15'] * 100, 1),
+                "1X & Over 1.5 %": round(pred['Combo_1X_Ov15'] * 100, 1), "X2 & Over 1.5 %": round(pred['Combo_X2_Ov15'] * 100, 1),
+                
+                # Combos 2.5
+                "1 & Over 2.5 %": round(pred['Combo_1_Ov25'] * 100, 1), "2 & Over 2.5 %": round(pred['Combo_2_Ov25'] * 100, 1),
+                "1 & Under 2.5 %": round(pred['Combo_1_Un25'] * 100, 1), "2 & Under 2.5 %": round(pred['Combo_2_Un25'] * 100, 1),
+                "1X & Over 2.5 %": round(pred['Combo_1X_Ov25'] * 100, 1), "X2 & Over 2.5 %": round(pred['Combo_X2_Ov25'] * 100, 1),
+                
+                # Combos 3.5
+                "1 & Over 3.5 %": round(pred['Combo_1_Ov35'] * 100, 1), "2 & Over 3.5 %": round(pred['Combo_2_Ov35'] * 100, 1),
+                "1 & Under 3.5 %": round(pred['Combo_1_Un35'] * 100, 1), "2 & Under 3.5 %": round(pred['Combo_2_Un35'] * 100, 1),
+                "1X & Over 3.5 %": round(pred['Combo_1X_Ov35'] * 100, 1), "X2 & Over 3.5 %": round(pred['Combo_X2_Ov35'] * 100, 1),
+                
                 "Πιθανότερο Σκορ": pred['Top_Score'],
                 "Πιθανότητα Σκορ %": round(pred['Top_Score_Prob'] * 100, 1),
                 "Top 5 Σκορ": pred['Top_5_Scores'],
@@ -463,7 +488,7 @@ st.info(f"📅 **Περίοδος Αγώνων: {start_date.strftime('%d/%m/%Y')
 # --- ΔΗΜΙΟΥΡΓΙΑ TABS ---
 tab1, tab2, tab3, tab4 = st.tabs([
     "🏆 Top 20 Πιο Πιθανά Σκορ", 
-    "🔀 Top 20 Combo Bets", 
+    "🔀 Top 20 Combo Bets (Full O/U)", 
     "⚽ Top 20 Over / Under", 
     f"📊 Αναλυτική Προβολή ({selected_league_name})"
 ])
@@ -525,48 +550,81 @@ with tab1:
     else:
         st.warning("⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες στο συγκεκριμένο εύρος ημερομηνιών.")
 
-# --- TAB 2: TOP 20 COMBO BETS (ΝΕΟ!) ---
+# --- TAB 2: TOP 20 COMBO BETS (FULL O/U 1.5, 2.5, 3.5) ---
 with tab2:
-    st.subheader("🔀 Top 20 Συνδυαστικά Στοιχήματα (Combo Bets)")
-    st.caption("Αυτόματος υπολογισμός πιθανοτήτων για συνδυασμούς σημείου και γκολ απευθείας από το Matrix.")
+    st.subheader("🔀 Top 20 Συνδυαστικά Στοιχήματα (Full Combo Market Generator)")
+    st.caption("Αυτόματος υπολογισμός πιθανοτήτων για όλα τα όρια Over/Under (1.5, 2.5, 3.5) σε συνδυασμό με σημεία και διπλή ευκαιρία.")
     
     if all_matches_list:
         df_all = pd.DataFrame(all_matches_list)
         
-        sub_c1, sub_c2, sub_c3 = st.tabs([
-            "🔥 Top 20 1/2 & Over 2.5", 
-            "🛡️ Top 20 1/2 & Under 3.5", 
-            "⚡ Top 20 1X/X2 & Over 1.5"
+        c_sub1, c_sub2, c_sub3 = st.tabs([
+            "⚡ Combos για 1.5 Goals", 
+            "🔥 Combos για 2.5 Goals", 
+            "🛡️ Combos για 3.5 Goals"
         ])
         
         c_cols = ["Πρωτάθλημα", "Ημερομηνία", "Ώρα", "Αγώνας", "xG Γηπεδούχου", "xG Φιλοξενούμενου"]
         
-        with sub_c1:
-            st.write("#### 🔥 Top 20 (1 ή 2) & Over 2.5")
-            df_c1 = df_all.sort_values(by="1 & Over 2.5 %", ascending=False)
-            df_c2 = df_all.sort_values(by="2 & Over 2.5 %", ascending=False)
-            st.markdown("**Γηπεδούχος Νίκη & Over 2.5:**")
-            st.dataframe(df_c1[c_cols + ["1 & Over 2.5 %"]].head(20), use_container_width=True)
-            st.markdown("**Φιλοξενούμενη Νίκη & Over 2.5:**")
-            st.dataframe(df_c2[c_cols + ["2 & Over 2.5 %"]].head(20), use_container_width=True)
-            
-        with sub_c2:
-            st.write("#### 🛡️ Top 20 (1 ή 2) & Under 3.5 (Ασφαλή Combo)")
-            df_u35_1 = df_all.sort_values(by="1 & Under 3.5 %", ascending=False)
-            df_u35_2 = df_all.sort_values(by="2 & Under 3.5 %", ascending=False)
-            st.markdown("**Γηπεδούχος Νίκη & Under 3.5:**")
-            st.dataframe(df_u35_1[c_cols + ["1 & Under 3.5 %"]].head(20), use_container_width=True)
-            st.markdown("**Φιλοξενούμενη Νίκη & Under 3.5:**")
-            st.dataframe(df_u35_2[c_cols + ["2 & Under 3.5 %"]].head(20), use_container_width=True)
-            
-        with sub_c3:
-            st.write("#### ⚡ Top 20 Διπλή Ευκαιρία & Over 1.5 (Η Απόλυτη Επιλογή Ασφαλείας)")
-            df_1x = df_all.sort_values(by="1X & Over 1.5 %", ascending=False)
-            df_x2 = df_all.sort_values(by="X2 & Over 1.5 %", ascending=False)
-            st.markdown("**1Χ & Over 1.5:**")
-            st.dataframe(df_1x[c_cols + ["1X & Over 1.5 %"]].head(20), use_container_width=True)
-            st.markdown("**Χ2 & Over 1.5:**")
-            st.dataframe(df_x2[c_cols + ["X2 & Over 1.5 %"]].head(20), use_container_width=True)
+        with c_sub1:
+            st.write("#### ⚡ Top 20 Combos & Over/Under 1.5")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown("**1 & Over 1.5:**")
+                st.dataframe(df_all.sort_values(by="1 & Over 1.5 %", ascending=False)[c_cols + ["1 & Over 1.5 %"]].head(20), use_container_width=True)
+                st.markdown("**1 & Under 1.5:**")
+                st.dataframe(df_all.sort_values(by="1 & Under 1.5 %", ascending=False)[c_cols + ["1 & Under 1.5 %"]].head(20), use_container_width=True)
+            with col_b:
+                st.markdown("**2 & Over 1.5:**")
+                st.dataframe(df_all.sort_values(by="2 & Over 1.5 %", ascending=False)[c_cols + ["2 & Over 1.5 %"]].head(20), use_container_width=True)
+                st.markdown("**2 & Under 1.5:**")
+                st.dataframe(df_all.sort_values(by="2 & Under 1.5 %", ascending=False)[c_cols + ["2 & Under 1.5 %"]].head(20), use_container_width=True)
+            st.markdown("**Διπλή Ευκαιρία & Over 1.5 (1Χ & Over 1.5 / Χ2 & Over 1.5):**")
+            col_c, col_d = st.columns(2)
+            with col_c:
+                st.dataframe(df_all.sort_values(by="1X & Over 1.5 %", ascending=False)[c_cols + ["1X & Over 1.5 %"]].head(20), use_container_width=True)
+            with col_d:
+                st.dataframe(df_all.sort_values(by="X2 & Over 1.5 %", ascending=False)[c_cols + ["X2 & Over 1.5 %"]].head(20), use_container_width=True)
+
+        with c_sub2:
+            st.write("#### 🔥 Top 20 Combos & Over/Under 2.5")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown("**1 & Over 2.5:**")
+                st.dataframe(df_all.sort_values(by="1 & Over 2.5 %", ascending=False)[c_cols + ["1 & Over 2.5 %"]].head(20), use_container_width=True)
+                st.markdown("**1 & Under 2.5:**")
+                st.dataframe(df_all.sort_values(by="1 & Under 2.5 %", ascending=False)[c_cols + ["1 & Under 2.5 %"]].head(20), use_container_width=True)
+            with col_b:
+                st.markdown("**2 & Over 2.5:**")
+                st.dataframe(df_all.sort_values(by="2 & Over 2.5 %", ascending=False)[c_cols + ["2 & Over 2.5 %"]].head(20), use_container_width=True)
+                st.markdown("**2 & Under 2.5:**")
+                st.dataframe(df_all.sort_values(by="2 & Under 2.5 %", ascending=False)[c_cols + ["2 & Under 2.5 %"]].head(20), use_container_width=True)
+            st.markdown("**Διπλή Ευκαιρία & Over 2.5:**")
+            col_c, col_d = st.columns(2)
+            with col_c:
+                st.dataframe(df_all.sort_values(by="1X & Over 2.5 %", ascending=False)[c_cols + ["1X & Over 2.5 %"]].head(20), use_container_width=True)
+            with col_d:
+                st.dataframe(df_all.sort_values(by="X2 & Over 2.5 %", ascending=False)[c_cols + ["X2 & Over 2.5 %"]].head(20), use_container_width=True)
+
+        with c_sub3:
+            st.write("#### 🛡️ Top 20 Combos & Over/Under 3.5")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown("**1 & Over 3.5:**")
+                st.dataframe(df_all.sort_values(by="1 & Over 3.5 %", ascending=False)[c_cols + ["1 & Over 3.5 %"]].head(20), use_container_width=True)
+                st.markdown("**1 & Under 3.5:**")
+                st.dataframe(df_all.sort_values(by="1 & Under 3.5 %", ascending=False)[c_cols + ["1 & Under 3.5 %"]].head(20), use_container_width=True)
+            with col_b:
+                st.markdown("**2 & Over 3.5:**")
+                st.dataframe(df_all.sort_values(by="2 & Over 3.5 %", ascending=False)[c_cols + ["2 & Over 3.5 %"]].head(20), use_container_width=True)
+                st.markdown("**2 & Under 3.5:**")
+                st.dataframe(df_all.sort_values(by="2 & Under 3.5 %", ascending=False)[c_cols + ["2 & Under 3.5 %"]].head(20), use_container_width=True)
+            st.markdown("**Διπλή Ευκαιρία & Over 3.5:**")
+            col_c, col_d = st.columns(2)
+            with col_c:
+                st.dataframe(df_all.sort_values(by="1X & Over 3.5 %", ascending=False)[c_cols + ["1X & Over 3.5 %"]].head(20), use_container_width=True)
+            with col_d:
+                st.dataframe(df_all.sort_values(by="X2 & Over 3.5 %", ascending=False)[c_cols + ["X2 & Over 3.5 %"]].head(20), use_container_width=True)
     else:
         st.warning("⚠️ Δεν βρέθηκαν επερχόμενοι αγώνες.")
 
